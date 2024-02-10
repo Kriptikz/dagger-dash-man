@@ -11,6 +11,7 @@ This project is currently **EXPERIMENTAL** and **WIP**. Use at your own discreti
 
 ## Future Features:
 
+- TLS and authentication.
 - Show Wield Node version.
 - Show Wield Node service status.
 - Show last released Wield Node version.
