@@ -10,7 +10,7 @@ use axum::{
 use logwatcher::LogWatcher;
 use tokio::{
     sync::broadcast::{channel, Sender},
-    time::sleep,
+    time::{sleep, Instant},
 };
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt as _};
 
@@ -28,7 +28,7 @@ async fn main() {
         .layer(Extension(tx.clone()));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-
+    println!("Listener bound to port 3000");
     tokio::spawn(async move {
         let path = "/home/dagger/config.log".to_string();
         loop {
@@ -36,14 +36,23 @@ async fn main() {
                 let mut log_watcher = LogWatcher::register(&path).unwrap();
                 let tx = tx.clone();
 
-                // A simple subscriber to keep the logwatcher tx sender open.
-                // Without this the SSE  handle_stream_logs stream doesn't pick up any messages.
+                // simple subscriber used to ensure a constant reciever for this channel
+                // without this, the log_watcher tx.send doesn't make it to the
+                // sse handler subscriber.
                 let mut rx = tx.subscribe();
                 tokio::spawn(async move { while let Ok(_msg) = rx.recv().await {} });
+                let mut batch = Vec::new();
+                let batch_send_interval = Duration::from_secs(1); // Adjust as needed
+                let mut last_sent = Instant::now();
 
                 log_watcher.watch(&mut move |line: String| {
-                    if tx.send(line).is_err() {
-                        eprintln!("Error sending sse data across channel");
+                    batch.push(line);
+                    if last_sent.elapsed() >= batch_send_interval {
+                        if let Err(e) = tx.send(batch.join("\n")) {
+                            eprintln!("Error sending sse data across channel: {}", e);
+                        }
+                        batch.clear();
+                        last_sent = Instant::now();
                     }
                     logwatcher::LogWatcherAction::None
                 });
