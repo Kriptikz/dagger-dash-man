@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %} Index {% endblock %}
+
+{% block content %}
+<label>
+    <input type="checkbox" id="toggleScroll" onchange="toggleAutoScroll()"> Always scroll to bottom
+</label>
+<div id="log-container" hx-sse="connect:/stream-logs swap:message" hx-swap="beforeend">
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+#content {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1rem;
+}
+
+table, th, td {
+  border: 1px solid black;
+	padding: 0.25rem;
+}
+
+#log-container {
+    overflow-y: scroll; /* Enable vertical scrolling */
+    height: 400px; /* Set a fixed height */
+    width: 600px;
+    border: 1px solid #ccc; /* Add a border */
+    padding: 10px; /* Add some padding */
+    background-color: #f9f9f9; /* Light grey background */
+    font-family: monospace; /* Optional: Makes it look more like traditional log output */
+    white-space: pre-wrap; /* Ensures formatting and line breaks are preserved */
+}
+
