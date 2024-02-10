@@ -1,4 +1,4 @@
-# Dagger Dashboard Monitor
+# Dagger Management Dashboard
 
 ## Experimental Project Notice
 
