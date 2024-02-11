@@ -1,23 +1,18 @@
-function toggleAutoScroll() {
-    var checkbox = document.getElementById('toggle-scroll');
-    var scrollableDiv = document.getElementById('log-container');
-
-    if (checkbox.checked) {
-        scrollableDiv.scrollTop = scrollableDiv.scrollHeight;
+// htmx hx-swap with scroll:bottom doesn't seem to work with sse
+// so here's a bit of js to autoscroll the elements
+function scrollDivToBottom(scrollableDiv) {
+    if (scrollableDiv) {
+      scrollableDiv.scrollTop = scrollableDiv.scrollHeight;
     }
 }
 
-window.onload = function() {
-    if (document.getElementById('toggle-scroll').checked) {
-        toggleAutoScroll();
-    }
-};
-
 var observer = new MutationObserver(function(mutations) {
     mutations.forEach(function(mutation) {
-        if (document.getElementById('toggle-scroll').checked) {
-            toggleAutoScroll();
-        }
+      let shouldScrollCheckbox = document.getElementById('toggle-scroll');
+      if (shouldScrollCheckbox && shouldScrollCheckbox.checked) {
+        let scrollableDiv = document.getElementById('log-container');
+        scrollDivToBottom(scrollableDiv);
+      }
     });
 });
 
