@@ -13,7 +13,7 @@ table, th, td {
 #log-container {
     overflow-y: scroll; /* Enable vertical scrolling */
     height: 400px; /* Set a fixed height */
-    width: 600px;
+    width: 900px;
     border: 1px solid #ccc; /* Add a border */
     padding: 10px; /* Add some padding */
     background-color: #f9f9f9; /* Light grey background */
