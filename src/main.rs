@@ -9,13 +9,12 @@ use askama::Template;
 use axum::{
     http::{Response, StatusCode},
     response::{sse::Event, IntoResponse, Sse},
-    routing::{get, put},
+    routing::{get, post, put},
     Extension, Router,
 };
 use logwatcher::LogWatcher;
 use tokio::{
-    sync::broadcast::{channel, Sender},
-    time::{sleep, Instant},
+    process::Command, sync::broadcast::{channel, Sender}, time::{sleep, Instant}
 };
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt as _};
 
@@ -40,6 +39,12 @@ async fn main() {
         .route("/start-log-stream", put(handle_start_log_stream))
         .route("/stop-log-stream", put(handle_stop_log_stream))
         .route("/stream-logs", get(handle_stream_logs))
+        .route("/log-stream/status", get(handle_get_log_stream_status))
+        .route("/wield/service/version", get(handle_get_wield_version))
+        .route("/wield/service/status", get(handle_get_wield_status))
+        .route("/wield/service/start", post(handle_start_wield_service))
+        .route("/wield/service/stop", post(handle_stop_wield_service))
+        .route("/wield/service/restart", post(handle_restart_wield_service))
         .layer(Extension(tx.clone()))
         .layer(Extension(shared_state));
 
@@ -149,4 +154,82 @@ async fn handle_stream_logs(
             .interval(Duration::from_secs(600))
             .text("keep-alive-text"),
     )
+}
+async fn handle_get_wield_version(Extension(tx): Extension<LogStream>) -> String {
+    let output = Command::new("/home/dagger/wield")
+        .arg("--version")
+        .output()
+        .await
+        .expect("Should successfully run shell command");
+    
+    let output_stdout = String::from_utf8(output.stdout).unwrap();
+
+    if tx.send(output_stdout.clone()).is_err() {
+        eprintln!("Error sending cmd output across channel.");
+    };
+
+    format!("Version: {}", output_stdout)
+}
+
+async fn handle_start_wield_service() -> impl IntoResponse {
+    Command::new("systemctl")
+        .arg("start")
+        .arg("wield")
+        .output()
+        .await
+        .expect("Should successfully run shell command");
+    
+    StatusCode::OK
+}
+
+async fn handle_stop_wield_service() -> impl IntoResponse {
+    Command::new("systemctl")
+        .arg("stop")
+        .arg("wield")
+        .output()
+        .await
+        .expect("Should successfully run shell command");
+    
+    StatusCode::OK
+}
+
+async fn handle_restart_wield_service() -> impl IntoResponse {
+    Command::new("systemctl")
+        .arg("restart")
+        .arg("wield")
+        .output()
+        .await
+        .expect("Should successfully run shell command");
+    
+    StatusCode::OK
+}
+
+async fn handle_get_wield_status() -> impl IntoResponse {
+    let output = Command::new("systemctl")
+        .arg("show")
+        .arg("-p")
+        .arg("ActiveState")
+        .arg("wield")
+        .output()
+        .await
+        .expect("Should successfully run shell command");
+    
+    let output_stdout = String::from_utf8(output.stdout).unwrap();
+    
+
+    let split_output: Vec<&str> = output_stdout.split("=").collect();
+
+    format!("Service Status: {}", split_output.last().unwrap())
+}
+
+async fn handle_get_log_stream_status(
+    Extension(shared_state): Extension<Arc<Mutex<AppState>>>,
+) -> &'static str {
+    let shared_state_lock = shared_state.lock().unwrap();
+    
+    if shared_state_lock.stream_logs_toggle {
+        "Log Stream: active"
+    } else {
+        "Log Stream: inactive"
+    }
 }

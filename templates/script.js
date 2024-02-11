@@ -1,5 +1,5 @@
 function toggleAutoScroll() {
-    var checkbox = document.getElementById('toggleScroll');
+    var checkbox = document.getElementById('toggle-scroll');
     var scrollableDiv = document.getElementById('log-container');
 
     if (checkbox.checked) {
@@ -8,14 +8,14 @@ function toggleAutoScroll() {
 }
 
 window.onload = function() {
-    if (document.getElementById('toggleScroll').checked) {
+    if (document.getElementById('toggle-scroll').checked) {
         toggleAutoScroll();
     }
 };
 
 var observer = new MutationObserver(function(mutations) {
     mutations.forEach(function(mutation) {
-        if (document.getElementById('toggleScroll').checked) {
+        if (document.getElementById('toggle-scroll').checked) {
             toggleAutoScroll();
         }
     });
