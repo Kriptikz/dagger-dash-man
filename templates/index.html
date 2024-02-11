@@ -6,6 +6,14 @@
 <label>
     <input type="checkbox" id="toggleScroll" onchange="toggleAutoScroll()"> Always scroll to bottom
 </label>
-<div id="log-container" hx-ext="sse" sse-connect="/stream-logs" sse-swap="message" hx-swap="beforeend">
+<div
+ id="sse-container"
+  hx-ext="sse"
+  sse-connect="/stream-logs"
+>
+  <button id="startButton" hx-put="/start-log-stream" hx-trigger="click" hx-swap="none">Start Log Stream</button>
+  <button id="stopButton" hx-put="/stop-log-stream" hx-trigger="click" hx-swap="none">Stop Log Stream</button>
+  <div id="log-container" sse-swap="log-stream" hx-swap="beforeend">
+  </div>
 </div>
 {% endblock %}
