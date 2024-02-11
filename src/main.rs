@@ -213,7 +213,7 @@ async fn handle_post_login(
 
 fn has_valid_auth_token(cookies: Cookies) -> bool {
     if let Some(auth_cookie) = cookies.get("auth_token") {
-        return verified_auth_token(auth_cookie.to_string());
+        return verified_auth_token(auth_cookie.value().to_string());
     }
 
     false
