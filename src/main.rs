@@ -309,8 +309,8 @@ async fn handle_stream_logs(
                         let event = Event::default().event("metric-is-up").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        //let start_date_time = Utc.timestamp_opt(uptime_metrics.start_ts as i64, 0);
-                        let event_data = format!("start_ts: {:?}", uptime_metrics.start_ts);
+                        let start_date_time = Utc.timestamp_millis_opt(uptime_metrics.start_ts as i64);
+                        let event_data = format!("start_ts_date: {:?}", start_date_time.unwrap());
                         let event = Event::default().event("metric-start-ts").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
@@ -322,8 +322,8 @@ async fn handle_stream_logs(
                         let event = Event::default().event("metric-uptime-added-ms").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        //let last_successfull_sync_date_time = Utc.timestamp_opt(uptime_metrics.last_successful_sync_ts as i64, 0);
-                        let event_data = format!("last_successful_sync_ts: {:?}", uptime_metrics.last_successful_sync_ts);
+                        let last_successfull_sync_date_time = Utc.timestamp_millis_opt(uptime_metrics.last_successful_sync_ts as i64);
+                        let event_data = format!("last_successful_sync_ts_date: {:?}", last_successfull_sync_date_time.unwrap());
                         let event = Event::default().event("metric-last-successful-sync-ts").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
                     }
