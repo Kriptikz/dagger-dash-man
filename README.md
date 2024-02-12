@@ -8,7 +8,7 @@ This project is currently **EXPERIMENTAL** and **WIP**. Use at your own discreti
 ## Current Features:
 
 - Live tailing of Dagger Wield Node `config.log`.
-- Password login authentication. For https, follow the installation [below](docs/README.md#installation)
+- Password login authentication. For https, follow the installation [below](#installation)
 - Show Wield Node version.
 - Show Wield Node service status.
 - Management Buttons:
