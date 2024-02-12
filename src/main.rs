@@ -304,16 +304,14 @@ async fn handle_stream_logs(
                 if is_authed {
                     if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref().unwrap()) {
                         println!("UPTIME METRICS: {:?}", uptime_metrics);
-                        Event::default().event("uptime-metrics").data("filler data")
+                    } 
+                    let shared_state = shared_state.lock().unwrap();
+                    if shared_state.stream_logs_toggle {
+                        let msg = msg.unwrap();
+                        let event_data = format!("<div>{}</div>", msg);
+                        Event::default().event("log-stream").data(event_data)
                     } else {
-                        let shared_state = shared_state.lock().unwrap();
-                        if shared_state.stream_logs_toggle {
-                            let msg = msg.unwrap();
-                            let event_data = format!("<div>{}</div>", msg);
-                            Event::default().event("log-stream").data(event_data)
-                        } else {
-                            Event::default()
-                        }
+                        Event::default()
                     }
                 } else {
                     Event::default()
@@ -458,6 +456,7 @@ struct UptimeMetrics {
 }
 
 fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
+    println!("parsing uptime metric with regex");
     let re = Regex::new(r#"
         ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}\s
         \[\w+\]\s
@@ -470,6 +469,7 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
         last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)
     "#).unwrap();
 
+    println!("uptime metrics struct creator");
     re.captures(entry).map(|caps| {
         UptimeMetrics {
             node_id: caps["node_id"].to_string(),
