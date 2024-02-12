@@ -407,7 +407,10 @@ async fn handle_get_wield_node_id(
                 eprintln!("Error sending cmd output across channel.");
             };
 
-            return (StatusCode::OK, format!("Node ID: {}", output_stdout));
+            let beginning = &output_stdout[0..6];
+            let length = output_stdout.len();
+            let ending = &output_stdout[length - 6..length];
+            return (StatusCode::OK, format!("Node ID: {}...{}", beginning, ending));
         } else {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
