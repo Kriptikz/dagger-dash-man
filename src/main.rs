@@ -16,6 +16,7 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
 use chrono::{TimeZone, Utc};
 use logwatcher::LogWatcher;
+use passwords::PasswordGenerator;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -47,7 +48,7 @@ impl FromRef<AppState> for Key {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Config {
-    login_key: String,
+    password: String,
 }
 async fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
     let mut config_path = PathBuf::new();
@@ -60,9 +61,22 @@ async fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
 
     if !config_path.exists() {
         // Define a default configuration
-        // generate api key
-        let login_key = "fake_api_key".to_string();
-        let default_config = Config { login_key };
+        let pg = PasswordGenerator {
+            length: 20,
+            numbers: true,
+            lowercase_letters: true,
+            uppercase_letters: true,
+            symbols: false,
+            spaces: false,
+            exclude_similar_characters: false,
+            strict: true,
+        };
+
+        let new_password = pg
+            .generate_one()
+            .expect("Should succesfully generate a new password when creating a new config.");
+
+        let default_config = Config { password: new_password };
 
         // Serialize the default configuration to TOML
         let toml = toml::to_string(&default_config)?;
@@ -209,7 +223,7 @@ async fn script() -> impl IntoResponse {
 
 #[derive(Serialize, Deserialize)]
 struct LoginRequest {
-    login_key: String,
+    password: String,
 }
 
 #[derive(Template)]
@@ -226,8 +240,8 @@ async fn handle_post_login(
     cookies: PrivateCookieJar,
     Form(login_form): Form<LoginForm>,
 ) -> impl IntoResponse {
-    let payload_login_key = login_form.password.to_string();
-    if payload_login_key == config.login_key {
+    let payload_password = login_form.password.to_string();
+    if payload_password == config.password {
         let cookie = Cookie::build(("auth_token", "session_value_here"))
             .http_only(true)
             .secure(true)
@@ -309,22 +323,39 @@ async fn handle_stream_logs(
                         let event = Event::default().event("metric-is-up").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        let start_date_time = Utc.timestamp_millis_opt(uptime_metrics.start_ts as i64);
+                        let start_date_time =
+                            Utc.timestamp_millis_opt(uptime_metrics.start_ts as i64);
                         let event_data = format!("start_ts_date: {:?}", start_date_time.unwrap());
                         let event = Event::default().event("metric-start-ts").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        let event_data = format!("current_uptime_ms: {}", uptime_metrics.current_uptime_ms.to_string());
-                        let event = Event::default().event("metric-current-uptime-ms").data(event_data);
+                        let event_data = format!(
+                            "current_uptime_ms: {}",
+                            uptime_metrics.current_uptime_ms.to_string()
+                        );
+                        let event = Event::default()
+                            .event("metric-current-uptime-ms")
+                            .data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        let event_data = format!("uptime_added_ms: {}", uptime_metrics.uptime_added_ms.to_string());
-                        let event = Event::default().event("metric-uptime-added-ms").data(event_data);
+                        let event_data = format!(
+                            "uptime_added_ms: {}",
+                            uptime_metrics.uptime_added_ms.to_string()
+                        );
+                        let event = Event::default()
+                            .event("metric-uptime-added-ms")
+                            .data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        let last_successfull_sync_date_time = Utc.timestamp_millis_opt(uptime_metrics.last_successful_sync_ts as i64);
-                        let event_data = format!("last_successful_sync_ts_date: {:?}", last_successfull_sync_date_time.unwrap());
-                        let event = Event::default().event("metric-last-successful-sync-ts").data(event_data);
+                        let last_successfull_sync_date_time =
+                            Utc.timestamp_millis_opt(uptime_metrics.last_successful_sync_ts as i64);
+                        let event_data = format!(
+                            "last_successful_sync_ts_date: {:?}",
+                            last_successfull_sync_date_time.unwrap()
+                        );
+                        let event = Event::default()
+                            .event("metric-last-successful-sync-ts")
+                            .data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
                     }
 
@@ -336,7 +367,8 @@ async fn handle_stream_logs(
                         let _ = tx_new_clone.send(Ok(event)).await;
                     }
                 }
-            }.await;
+            }
+            .await;
         }
     });
 
@@ -410,7 +442,10 @@ async fn handle_get_wield_node_id(
             let beginning = &output_stdout[0..6];
             let length = output_stdout.len();
             let ending = &output_stdout[length - 6..length];
-            return (StatusCode::OK, format!("Node ID: {}...{}", beginning, ending));
+            return (
+                StatusCode::OK,
+                format!("Node ID: {}...{}", beginning, ending),
+            );
         } else {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,

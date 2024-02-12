@@ -19,3 +19,4 @@ axum-extra = { version = "0.9.2", features = ["cookie-private"] }
 tower-http = { version = "0.5.1", features = ["cors", "fs"] }
 regex = "1.10.3"
 chrono = "0.4.34"
+passwords = "3.1.16"
