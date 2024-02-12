@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
+    str::FromStr,
 };
 
 use askama::Template;
@@ -15,6 +16,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
 use logwatcher::LogWatcher;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs,
@@ -300,13 +302,18 @@ async fn handle_stream_logs(
         stream
             .map(move |msg| {
                 if is_authed {
-                    let shared_state = shared_state.lock().unwrap();
-                    if shared_state.stream_logs_toggle {
-                        let msg = msg.unwrap();
-                        let event_data = format!("<div>{}</div>", msg);
-                        Event::default().event("log-stream").data(event_data)
+                    if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref().unwrap()) {
+                        println!("UPTIME METRICS: {:?}", uptime_metrics);
+                        Event::default().event("uptime-metrics").data("filler data")
                     } else {
-                        Event::default()
+                        let shared_state = shared_state.lock().unwrap();
+                        if shared_state.stream_logs_toggle {
+                            let msg = msg.unwrap();
+                            let event_data = format!("<div>{}</div>", msg);
+                            Event::default().event("log-stream").data(event_data)
+                        } else {
+                            Event::default()
+                        }
                     }
                 } else {
                     Event::default()
@@ -439,3 +446,42 @@ async fn handle_get_log_stream_status(
 
     (StatusCode::UNAUTHORIZED, "Unauthorized")
 }
+
+#[derive(Debug)]
+struct UptimeMetrics {
+    node_id: String,
+    is_up: bool,
+    start_ts: u64,
+    current_uptime_ms: u64,
+    uptime_added_ms: u64,
+    last_successful_sync_ts: u64,
+}
+
+fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
+    let re = Regex::new(r#"
+        ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}\s
+        \[\w+\]\s
+        [\w:]+ - datapoint: uptime_metrics\s
+        node_id="(?P<node_id>[^"]+)"\s
+        is_up=(?P<is_up>\w+)\s
+        start_ts=(?P<start_ts>\d+)\s
+        current_uptime_ms=(?P<current_uptime_ms>\d+)\s
+        uptime_added_ms=(?P<uptime_added_ms>\d+)\s
+        last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)
+    "#).unwrap();
+
+    re.captures(entry).map(|caps| {
+        UptimeMetrics {
+            node_id: caps["node_id"].to_string(),
+            is_up: match &caps["is_up"] {
+                "true" => true,
+                _ => false,
+            },
+            start_ts: caps["start_ts"].parse().unwrap_or_default(),
+            current_uptime_ms: caps["current_uptime_ms"].parse().unwrap_or_default(),
+            uptime_added_ms: caps["uptime_added_ms"].parse().unwrap_or_default(),
+            last_successful_sync_ts: caps["last_successful_sync_ts"].parse().unwrap_or_default(),
+        }
+    })
+}
+
