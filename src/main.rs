@@ -1,9 +1,9 @@
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
-    str::FromStr,
 };
 
 use askama::Template;
@@ -302,9 +302,10 @@ async fn handle_stream_logs(
         stream
             .map(move |msg| {
                 if is_authed {
-                    if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref().unwrap()) {
+                    if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref().unwrap())
+                    {
                         println!("UPTIME METRICS: {:?}", uptime_metrics);
-                    } 
+                    }
                     let shared_state = shared_state.lock().unwrap();
                     if shared_state.stream_logs_toggle {
                         let msg = msg.unwrap();
@@ -457,26 +458,17 @@ struct UptimeMetrics {
 
 fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     println!("parsing uptime metric with regex");
-    let re = Regex::new(r#"
-        ^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}\s
-        \[\w+\]\s
-        [\w:]+ - datapoint: uptime_metrics\s
-        node_id="(?P<node_id>[^"]+)"\s
-        is_up=(?P<is_up>\w+)\s
-        start_ts=(?P<start_ts>\d+)\s
-        current_uptime_ms=(?P<current_uptime_ms>\d+)\s
-        uptime_added_ms=(?P<uptime_added_ms>\d+)\s
-        last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)
-    "#).unwrap();
+    let re = Regex::new(
+        r#"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}\s\[\w+\]\s[\w:]+ - datapoint: uptime_metrics\snode_id="(?P<node_id>[^"]+)"\sis_up=(?P<is_up>true|false)\sstart_ts=(?P<start_ts>\d+)\scurrent_uptime_ms=(?P<current_uptime_ms>\d+)\suptime_added_ms=(?P<uptime_added_ms>\d+)\slast_successful_sync_ts=(?P<last_successful_sync_ts>\d+)"#,
+    )
+    .unwrap();
 
     println!("uptime metrics struct creator");
     re.captures(entry).map(|caps| {
+        println!("Captured fields:");
         UptimeMetrics {
             node_id: caps["node_id"].to_string(),
-            is_up: match &caps["is_up"] {
-                "true" => true,
-                _ => false,
-            },
+            is_up: caps["is_up"].parse().unwrap_or(false),
             start_ts: caps["start_ts"].parse().unwrap_or_default(),
             current_uptime_ms: caps["current_uptime_ms"].parse().unwrap_or_default(),
             uptime_added_ms: caps["uptime_added_ms"].parse().unwrap_or_default(),
@@ -485,3 +477,55 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     })
 }
 
+fn parse_node_id(entry: &str) -> Option<String> {
+    let re = Regex::new(r#"node_id="(?P<node_id>[^\"]+)""#).unwrap();
+    let caps = re.captures(entry)?;
+
+    caps.name("node_id").map(|match_| match_.as_str().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_node_id() {
+        let log_entry = r#"2024-02-12T04:51:13.833282570+00:00 [INFO] dagger_logger::metrics - datapoint: uptime_metrics node_id="AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn" is_up=true start_ts=1707713462233 current_uptime_ms=11599 uptime_added_ms=5000 last_successful_sync_ts=1707713473740"#;
+        let parsed_metrics = parse_node_id(log_entry);
+
+        assert!(
+            parsed_metrics.is_some(),
+            "The parser should successfully extract node id."
+        );
+
+        let metrics = parsed_metrics.unwrap();
+
+        assert_eq!(
+            metrics,
+            "AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn"
+        );
+    }
+
+    #[test]
+    fn test_parse_uptime_metrics_entry() {
+        let log_entry = r#"2024-02-12T04:51:13.833282570+00:00 [INFO] dagger_logger::metrics - datapoint: uptime_metrics node_id="AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn" is_up=true start_ts=1707713462233 current_uptime_ms=11599 uptime_added_ms=5000 last_successful_sync_ts=1707713473740"#;
+        let parsed_metrics = parse_uptime_metrics_entry(log_entry);
+
+        assert!(
+            parsed_metrics.is_some(),
+            "The parser should successfully extract metrics."
+        );
+
+        let metrics = parsed_metrics.unwrap();
+
+        assert_eq!(
+            metrics.node_id,
+            "AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn"
+        );
+        assert_eq!(metrics.is_up, true);
+        assert_eq!(metrics.start_ts, 1707713462233);
+        assert_eq!(metrics.current_uptime_ms, 11599);
+        assert_eq!(metrics.uptime_added_ms, 5000);
+        assert_eq!(metrics.last_successful_sync_ts, 1707713473740);
+    }
+}
