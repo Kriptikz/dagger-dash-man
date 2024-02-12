@@ -306,6 +306,12 @@ async fn handle_stream_logs(
                     {
                         println!("UPTIME METRICS: {:?}", uptime_metrics);
                     }
+
+                    if let Some(node_id) = parse_node_id(msg.as_ref().unwrap())
+                    {
+                        println!("Node ID: {:?}", node_id);
+                    }
+
                     let shared_state = shared_state.lock().unwrap();
                     if shared_state.stream_logs_toggle {
                         let msg = msg.unwrap();
