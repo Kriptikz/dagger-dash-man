@@ -16,7 +16,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
 use logwatcher::LogWatcher;
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs,
@@ -307,8 +307,7 @@ async fn handle_stream_logs(
                         println!("UPTIME METRICS: {:?}", uptime_metrics);
                     }
 
-                    if let Some(node_id) = parse_node_id(msg.as_ref().unwrap())
-                    {
+                    if let Some(node_id) = parse_node_id(msg.as_ref().unwrap()) {
                         println!("Node ID: {:?}", node_id);
                     }
 
@@ -463,23 +462,87 @@ struct UptimeMetrics {
 }
 
 fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
-    println!("parsing uptime metric with regex");
-    let re = Regex::new(
-        r#"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}\s\[\w+\]\s[\w:]+ - datapoint: uptime_metrics\snode_id="(?P<node_id>[^"]+)"\sis_up=(?P<is_up>true|false)\sstart_ts=(?P<start_ts>\d+)\scurrent_uptime_ms=(?P<current_uptime_ms>\d+)\suptime_added_ms=(?P<uptime_added_ms>\d+)\slast_successful_sync_ts=(?P<last_successful_sync_ts>\d+)"#,
-    )
+    // Step 1: Check for the presence of fields using RegexSet
+    let set = RegexSet::new(&[
+        r#"node_id="(?P<node_id>[^\"]+)""#,
+        r"is_up=(true|false)",
+        r"start_ts=\d+",
+        r"current_uptime_ms=\d+",
+        r"uptime_added_ms=\d+",
+        r"last_successful_sync_ts=\d+",
+    ])
     .unwrap();
 
-    println!("uptime metrics struct creator");
-    re.captures(entry).map(|caps| {
-        println!("Captured fields:");
-        UptimeMetrics {
-            node_id: caps["node_id"].to_string(),
-            is_up: caps["is_up"].parse().unwrap_or(false),
-            start_ts: caps["start_ts"].parse().unwrap_or_default(),
-            current_uptime_ms: caps["current_uptime_ms"].parse().unwrap_or_default(),
-            uptime_added_ms: caps["uptime_added_ms"].parse().unwrap_or_default(),
-            last_successful_sync_ts: caps["last_successful_sync_ts"].parse().unwrap_or_default(),
-        }
+    let matches = set.matches(entry);
+
+    // Ensure all fields are present
+    println!("CHECKING MATCHEX");
+    if matches.iter().count() < 6 {
+        return None; // Not all fields are present, so exit early
+    }
+    println!("matches!!");
+
+    // Step 2: Extract values for each field
+    let node_id_re = Regex::new(r#"node_id="(?P<node_id>[^"]+)""#).unwrap();
+
+    let is_up_re = Regex::new(r"is_up=(?P<is_up>true|false)").unwrap();
+
+    let start_ts_re = Regex::new(r"start_ts=(?P<start_ts>\d+)").unwrap();
+
+    let current_uptime_ms_re = Regex::new(r"current_uptime_ms=(?P<current_uptime_ms>\d+)").unwrap();
+
+    let uptime_added_ms_re = Regex::new(r"uptime_added_ms=(?P<uptime_added_ms>\d+)").unwrap();
+
+    let last_successful_sync_ts_re =
+        Regex::new(r"last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)").unwrap();
+
+    println!("Extracing each field");
+
+    // Extracting each field
+    let node_id = node_id_re
+        .captures(entry)?
+        .name("node_id")?
+        .as_str()
+        .to_string();
+    let is_up = is_up_re
+        .captures(entry)?
+        .name("is_up")?
+        .as_str()
+        .parse()
+        .ok()?;
+    let start_ts = start_ts_re
+        .captures(entry)?
+        .name("start_ts")?
+        .as_str()
+        .parse()
+        .ok()?;
+    let current_uptime_ms = current_uptime_ms_re
+        .captures(entry)?
+        .name("current_uptime_ms")?
+        .as_str()
+        .parse()
+        .ok()?;
+    let uptime_added_ms = uptime_added_ms_re
+        .captures(entry)?
+        .name("uptime_added_ms")?
+        .as_str()
+        .parse()
+        .ok()?;
+    let last_successful_sync_ts = last_successful_sync_ts_re
+        .captures(entry)?
+        .name("last_successful_sync_ts")?
+        .as_str()
+        .parse()
+        .ok()?;
+
+    // Construct and return the UptimeMetrics struct if all fields were successfully extracted
+    Some(UptimeMetrics {
+        node_id,
+        is_up,
+        start_ts,
+        current_uptime_ms,
+        uptime_added_ms,
+        last_successful_sync_ts,
     })
 }
 
@@ -487,7 +550,8 @@ fn parse_node_id(entry: &str) -> Option<String> {
     let re = Regex::new(r#"node_id="(?P<node_id>[^\"]+)""#).unwrap();
     let caps = re.captures(entry)?;
 
-    caps.name("node_id").map(|match_| match_.as_str().to_string())
+    caps.name("node_id")
+        .map(|match_| match_.as_str().to_string())
 }
 
 #[cfg(test)]
@@ -506,10 +570,7 @@ mod tests {
 
         let metrics = parsed_metrics.unwrap();
 
-        assert_eq!(
-            metrics,
-            "AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn"
-        );
+        assert_eq!(metrics, "AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn");
     }
 
     #[test]
