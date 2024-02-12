@@ -107,8 +107,63 @@ TTL: Auto or Default of 36000
     ```shell
     sudo systemctl reload nginx
     ```
+### Running this web server.
 
-- Run this web service.
+  - running systemctl commands requires `sudo`. Which means when running this service
+if the start, stop, or restart commands are issued the web server will request a
+password to authenticate and run that command. This defeats the whole purpose though,
+as I want to be able to quickly restart/update from the dashboard. There are two 
+ways around this:
+    1. run the web server with `sudo`. **- It is not recommended to run a server with 
+elvated privileges**
+    2. Allow the `dagger` user to manage the wield service. This means as long as
+the user running a systemctl command for the wield service will not require `sudo`.
+This also keeps the server from doing whatever it wants with `sudo` privileges.
+
+#### Allowing dagger user to manage wield service
+
+  - To allow the `dagger` user to manage the wield service we just need to create a 
+`.plka` file for PolicyKit. PolicyKit should be already installed if you are using
+Ubuntu.
+
+
+  - Create a new `.plka` file in the appropriate directory. You can use nano or 
+another text editor, I will just use vim.:
+  ```shell
+  sudo vim localauthority/50-local.d/99-wieldnode.pkla
+  ```
+
+  - Paste the following into the file:
+```
+[Allow dagger to manage wield]
+Identity=unix-user:dagger
+Action=org.freedesktop.systemd1.manage-units;org.freedesktop.systemd1.manage-unit-files
+ResultActive=yes
+ResultInactive=yes
+ResultAny=yes
+```
+  
+  - Save and quit.
+
+  - You can verify the setup by simply running the systemctl restart command for 
+the wield service. It should not ask for a password when managing the wield service
+with systemctl commands as the `dagger` user anymore.
+  ```shell
+  systemctl restart wield
+  ```
+
+  - When running the dashboard web server as the `dagger` user, it will no longer 
+need to be elevated with `sudo` or required a password when running the start, 
+stop, and restart commands.
+
+
+
+#### Web server config
+
+  - The web server will automatically create a config at `/home/dagger/.config/dagdashman/config.toml`
+With a newly generated random password. You can use this password to login to the dashboard.
+If you change the password in the config file, you need to stop and start the web server so
+it will load the new config.
 
 
 
