@@ -46,11 +46,7 @@ Content: 0.0.0.0 <- Your vps public IP
 TTL: Auto or Default of 36000
 ```
 
-<<<<<<< Updated upstream
 - [Install and setup certbot](https://certbot.eff.org/instructions?ws=nginx&os=ubuntufocal)
-=======
-- [Install certbot](https://certbot.eff.org/instructions?ws=nginx&os=ubuntufocal)
->>>>>>> Stashed changes
   - Follow the above guide to install certbot and any dependencies.
   - Use the `sudo certbot --nginx` command to get the certificate.
     - It will ask for an email address.
