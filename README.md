@@ -8,16 +8,19 @@ This project is currently **EXPERIMENTAL** and **WIP**. Use at your own discreti
 ## Current Features:
 
 - Live tailing of Dagger Wield Node `config.log`.
-
-## Future Features:
-
-- TLS and authentication.
+- Password login authentication. For https, follow the installation [below](docs/README.md#installation)
 - Show Wield Node version.
 - Show Wield Node service status.
-- Show last released Wield Node version.
 - Management Buttons:
   - Stop Wield Node service
   - Start Wield Node service
+
+
+
+## Future Features:
+
+- Show last released Wield Node version.
+- Management Buttons:
   - Update Wield Node/ wield-installer
   - Clear history_db
   - Clear peers_db
@@ -43,7 +46,11 @@ Content: 0.0.0.0 <- Your vps public IP
 TTL: Auto or Default of 36000
 ```
 
+<<<<<<< Updated upstream
 - [Install and setup certbot](https://certbot.eff.org/instructions?ws=nginx&os=ubuntufocal)
+=======
+- [Install certbot](https://certbot.eff.org/instructions?ws=nginx&os=ubuntufocal)
+>>>>>>> Stashed changes
   - Follow the above guide to install certbot and any dependencies.
   - Use the `sudo certbot --nginx` command to get the certificate.
     - It will ask for an email address.
