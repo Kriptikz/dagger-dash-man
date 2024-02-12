@@ -476,27 +476,19 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     let matches = set.matches(entry);
 
     // Ensure all fields are present
-    println!("CHECKING MATCHEX");
     if matches.iter().count() < 6 {
         return None; // Not all fields are present, so exit early
     }
-    println!("matches!!");
 
     // Step 2: Extract values for each field
     let node_id_re = Regex::new(r#"node_id="(?P<node_id>[^"]+)""#).unwrap();
-
     let is_up_re = Regex::new(r"is_up=(?P<is_up>true|false)").unwrap();
-
     let start_ts_re = Regex::new(r"start_ts=(?P<start_ts>\d+)").unwrap();
-
     let current_uptime_ms_re = Regex::new(r"current_uptime_ms=(?P<current_uptime_ms>\d+)").unwrap();
-
     let uptime_added_ms_re = Regex::new(r"uptime_added_ms=(?P<uptime_added_ms>\d+)").unwrap();
-
     let last_successful_sync_ts_re =
         Regex::new(r"last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)").unwrap();
 
-    println!("Extracing each field");
 
     // Extracting each field
     let node_id = node_id_re
