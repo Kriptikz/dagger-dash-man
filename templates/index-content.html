@@ -10,7 +10,7 @@
   <button id="button-stop-service" hx-post="/wield/service/stop" hx-trigger="click" hx-swap="none">Stop Wield Service</button>
   <button id="button-restart-service" hx-post="/wield/service/restart" hx-trigger="click" hx-swap="none">Restart Wield Service</button>
   <label>
-      <input type="checkbox" id="toggle-scroll""> Always scroll to bottom
+      <input type="checkbox" id="toggle-scroll" onchange="toggleCheckbox(this)"> Always scroll to bottom
   </label>
   <button id="startButton" hx-put="/start-log-stream" hx-trigger="click" hx-swap="none">Start Log Stream</button>
   <button id="stopButton" hx-put="/stop-log-stream" hx-trigger="click" hx-swap="none">Stop Log Stream</button>

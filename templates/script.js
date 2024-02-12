@@ -16,7 +16,17 @@ var observer = new MutationObserver(function(mutations) {
     });
 });
 
-var config = { childList: true, subtree: true };
 
-observer.observe(document.getElementById('log-container'), config);
+let logContainer = document.getElementById('log-container');
 
+if (logContainer) {
+  var config = { childList: true, subtree: true };
+  observer.observe(document.getElementById('log-container'), config);
+}
+
+function toggleCheckbox(element) {
+  if (element.checked) {
+    var config = { childList: true, subtree: true };
+    observer.observe(document.getElementById('log-container'), config);
+  }
+}
