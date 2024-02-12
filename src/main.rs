@@ -292,43 +292,47 @@ async fn handle_stream_logs(
     Extension(tx): Extension<LogStream>,
     Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let rx = tx.subscribe();
+    let (tx_new, rx_new) = tokio::sync::mpsc::channel(100);
 
-    let stream = BroadcastStream::new(rx);
-
+    let mut rx = tx.subscribe();
     let is_authed = has_valid_auth_token(cookies);
-
-    Sse::new(
-        stream
-            .map(move |msg| {
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            let tx_new_clone = tx_new.clone();
+            let shared_state = shared_state.clone();
+            let is_authed = is_authed.clone();
+            async move {
+                // This is where you process each message
+                // For example, you could send multiple events based on the message content
                 if is_authed {
-                    if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref().unwrap())
-                    {
+                    if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref()) {
                         println!("UPTIME METRICS: {:?}", uptime_metrics);
+                        let event_data = format!("is_up: {}", uptime_metrics.is_up.to_string());
+                        let event = Event::default().event("metric-is-up").data(event_data);
+                        let _ = tx_new_clone.send(Ok(event)).await;
                     }
 
-                    if let Some(node_id) = parse_node_id(msg.as_ref().unwrap()) {
+                    if let Some(node_id) = parse_node_id(msg.as_ref()) {
                         println!("Node ID: {:?}", node_id);
                     }
 
-                    let shared_state = shared_state.lock().unwrap();
+                    let shared_state = shared_state.lock().unwrap().clone();
                     if shared_state.stream_logs_toggle {
-                        let msg = msg.unwrap();
+                        let msg = msg;
                         let event_data = format!("<div>{}</div>", msg);
-                        Event::default().event("log-stream").data(event_data)
-                    } else {
-                        Event::default()
+                        let event = Event::default().event("log-stream").data(event_data);
+                        let _ = tx_new_clone.send(Ok(event)).await;
                     }
-                } else {
-                    Event::default()
                 }
-            })
-            .map(Ok),
-    )
-    .keep_alive(
+            }.await;
+        }
+    });
+
+    let event_stream = tokio_stream::wrappers::ReceiverStream::new(rx_new);
+    Sse::new(event_stream).keep_alive(
         axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(600))
-            .text("keep-alive-text"),
+            .interval(Duration::from_secs(15))
+            .text("keep-alive-text"), // Some browsers or proxies need non-empty messages
     )
 }
 
@@ -488,7 +492,6 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     let uptime_added_ms_re = Regex::new(r"uptime_added_ms=(?P<uptime_added_ms>\d+)").unwrap();
     let last_successful_sync_ts_re =
         Regex::new(r"last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)").unwrap();
-
 
     // Extracting each field
     let node_id = node_id_re
