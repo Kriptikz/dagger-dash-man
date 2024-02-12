@@ -310,10 +310,23 @@ async fn handle_stream_logs(
                         let event_data = format!("is_up: {}", uptime_metrics.is_up.to_string());
                         let event = Event::default().event("metric-is-up").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
-                    }
 
-                    if let Some(node_id) = parse_node_id(msg.as_ref()) {
-                        println!("Node ID: {:?}", node_id);
+                        let event_data = format!("start_ts: {}", uptime_metrics.start_ts.to_string());
+                        let event = Event::default().event("metric-start-ts").data(event_data);
+                        let _ = tx_new_clone.send(Ok(event)).await;
+
+                        let event_data = format!("current_uptime_ms: {}", uptime_metrics.current_uptime_ms.to_string());
+                        let event = Event::default().event("metric-current-uptime-ms").data(event_data);
+                        let _ = tx_new_clone.send(Ok(event)).await;
+
+                        let event_data = format!("uptime_added_ms: {}", uptime_metrics.uptime_added_ms.to_string());
+                        let event = Event::default().event("metric-uptime-added-ms").data(event_data);
+                        let _ = tx_new_clone.send(Ok(event)).await;
+
+                        let event_data = format!("last_successful_sync_ts: {}", uptime_metrics.last_successful_sync_ts.to_string());
+                        let event = Event::default().event("metric-last-successful-sync-ts").data(event_data);
+                        let _ = tx_new_clone.send(Ok(event)).await;
+
                     }
 
                     let shared_state = shared_state.lock().unwrap().clone();

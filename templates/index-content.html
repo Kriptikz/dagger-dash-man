@@ -16,6 +16,11 @@
     <div id="wield-node-section-content">
       <div id="wield-version" hx-get="/wield/service/version" hx-trigger="load" hx-swap="innerHTML">Version: Loading...</div>
       <div id="wield-status" hx-get="/wield/service/status" hx-trigger="every 2s" hx-swap="innerHTML">Service Status: Loading...</div>
+      <div id="wield-is-up" sse-swap="metric-is-up" hx-swap="innerHTML">is_up: Loading...</div>
+      <div id="wield-start-ts" sse-swap="metric-start-ts" hx-swap="innerHTML">start_ts: Loading...</div>
+      <div id="wield-current-uptime-ms" sse-swap="metric-current-uptime-ms" hx-swap="innerHTML">current_uptime_ms: Loading...</div>
+      <div id="wield-uptime-added-ms" sse-swap="metric-uptime-added-ms" hx-swap="innerHTML">uptime_added_ms: Loading...</div>
+      <div id="wield-last-successful-sync-ts" sse-swap="metric-last-successful-sync-ts" hx-swap="innerHTML">last_successful_sync_ts: Loading...</div>
     </div>
   </div>
   <div id="live-logs">
