@@ -1,8 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %} Index {% endblock %}
+{% block title %} Login {% endblock %}
 
 {% block content %}
-<div>Login Screen</div>
-  <button id="button-login" hx-post="/login" hx-trigger="click" hx-swap="none">Login</button>
+<div id="login-content">
+<form action="/login" method="post" hx-target="#login-content" hx-swap="outerHTML", hx-push-url="/">
+  <fieldset>
+      <legend>Login</legend>
+      <p>
+        <label for="password">Password</label>
+        <input name="password" id="password" type="password">
+      </p>
+  <button id="button-login">Login</button>
+</div>
 {% endblock %}

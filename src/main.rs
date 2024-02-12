@@ -7,11 +7,9 @@ use std::{
 
 use askama::Template;
 use axum::{
-    http::{Response, StatusCode},
-    response::{sse::Event, IntoResponse, Sse},
-    routing::{get, post, put},
-    Extension, Router,
+    async_trait, extract::{FromRef, FromRequest, Request}, http::{header::CONTENT_TYPE, Response, StatusCode}, response::{sse::Event, IntoResponse, Redirect, Sse}, routing::{get, post, put}, Extension, Form, Json, RequestExt, Router
 };
+use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
 use logwatcher::LogWatcher;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -22,12 +20,23 @@ use tokio::{
     time::{sleep, Instant},
 };
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt as _};
-use tower_cookies::{Cookie, CookieManagerLayer, Cookies};
 
 pub type LogStream = Sender<String>;
 
-struct AppState {
+#[derive(Clone)]
+struct SharedState {
     stream_logs_toggle: bool,
+}
+
+#[derive(Clone)]
+struct AppState {
+    key: Key,
+}
+
+impl FromRef<AppState> for Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.key.clone()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -86,16 +95,20 @@ async fn main() {
 
     let (tx, _rx) = channel::<String>(10);
 
-    let shared_state = Arc::new(Mutex::new(AppState {
+    let shared_state = Arc::new(Mutex::new(SharedState {
         stream_logs_toggle: false,
     }));
+
+    let app_state = AppState {
+        key: Key::generate(),
+    };
 
     let app = Router::new()
         // No Auth
         .route("/styles.css", get(styles))
         .route("/script.js", get(script))
-        .route("/login", get(handle_get_login))
-        .route("/login", post(handle_post_login))
+        .route("/login", get(handle_get_login).post(handle_post_login))
+        .route("/logout", put(handle_logout))
         // Authed
         .route("/", get(index))
         .route("/start-log-stream", put(handle_start_log_stream))
@@ -110,7 +123,7 @@ async fn main() {
         .layer(Extension(tx.clone()))
         .layer(Extension(shared_state))
         .layer(Extension(config))
-        .layer(CookieManagerLayer::new());
+        .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Listener bound to port 3000");
@@ -155,7 +168,7 @@ async fn main() {
 #[template(path = "index.html")]
 struct IndexTemplate;
 
-async fn index(cookies: Cookies) -> impl IntoResponse {
+async fn index(cookies: PrivateCookieJar) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         return Ok(IndexTemplate);
     }
@@ -192,26 +205,34 @@ struct LoginRequest {
     login_key: String,
 }
 
+#[derive(Template)]
+#[template(path = "index-content.html")]
+struct IndexContentTemplate;
+
+#[derive(Serialize, Deserialize)]
+struct LoginForm {
+    password: String,
+}
+
 async fn handle_post_login(
-    cookies: Cookies,
     Extension(config): Extension<Config>,
+    cookies: PrivateCookieJar,
+    Form(login_form): Form<LoginForm>,
 ) -> impl IntoResponse {
-    let payload_login_key = "fake_api_key";
+    let payload_login_key = login_form.password.to_string();
     if payload_login_key == config.login_key {
         let cookie = Cookie::build(("auth_token", "session_value_here"))
             .http_only(true)
             .secure(true)
             .path("/");
 
-        cookies.add(cookie.into());
-
-        (StatusCode::OK, "Login Success")
+        return Ok((cookies.add(cookie), IndexContentTemplate));
     } else {
-        (StatusCode::UNAUTHORIZED, "Invalid credentials")
+        Err((StatusCode::UNAUTHORIZED, "Invalid credentials"))
     }
 }
 
-fn has_valid_auth_token(cookies: Cookies) -> bool {
+fn has_valid_auth_token(cookies: PrivateCookieJar) -> bool {
     if let Some(auth_cookie) = cookies.get("auth_token") {
         return verified_auth_token(auth_cookie.value().to_string());
     }
@@ -227,9 +248,15 @@ fn verified_auth_token(token: String) -> bool {
     return false;
 }
 
+async fn handle_logout(
+    cookies: PrivateCookieJar,
+) -> impl IntoResponse {
+    (StatusCode::OK, cookies.remove(Cookie::from("auth_token")), LoginTemplate)
+}
+
 async fn handle_start_log_stream(
-    cookies: Cookies,
-    Extension(shared_state): Extension<Arc<Mutex<AppState>>>,
+    cookies: PrivateCookieJar,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         let mut shared_state_lock = shared_state.lock().unwrap();
@@ -240,8 +267,8 @@ async fn handle_start_log_stream(
 }
 
 async fn handle_stop_log_stream(
-    cookies: Cookies,
-    Extension(shared_state): Extension<Arc<Mutex<AppState>>>,
+    cookies: PrivateCookieJar,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         let mut shared_state_lock = shared_state.lock().unwrap();
@@ -253,9 +280,9 @@ async fn handle_stop_log_stream(
 }
 
 async fn handle_stream_logs(
-    cookies: Cookies,
+    cookies: PrivateCookieJar,
     Extension(tx): Extension<LogStream>,
-    Extension(shared_state): Extension<Arc<Mutex<AppState>>>,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = tx.subscribe();
 
@@ -289,7 +316,7 @@ async fn handle_stream_logs(
 }
 
 async fn handle_get_wield_version(
-    cookies: Cookies,
+    cookies: PrivateCookieJar,
     Extension(tx): Extension<LogStream>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
@@ -323,7 +350,7 @@ async fn handle_get_wield_version(
     (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
 }
 
-async fn handle_start_wield_service(cookies: Cookies) -> impl IntoResponse {
+async fn handle_start_wield_service(cookies: PrivateCookieJar) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         Command::new("systemctl")
             .arg("start")
@@ -338,7 +365,7 @@ async fn handle_start_wield_service(cookies: Cookies) -> impl IntoResponse {
     StatusCode::UNAUTHORIZED
 }
 
-async fn handle_stop_wield_service(cookies: Cookies) -> impl IntoResponse {
+async fn handle_stop_wield_service(cookies: PrivateCookieJar) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         Command::new("systemctl")
             .arg("stop")
@@ -353,7 +380,7 @@ async fn handle_stop_wield_service(cookies: Cookies) -> impl IntoResponse {
     StatusCode::UNAUTHORIZED
 }
 
-async fn handle_restart_wield_service(cookies: Cookies) -> impl IntoResponse {
+async fn handle_restart_wield_service(cookies: PrivateCookieJar) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         Command::new("systemctl")
             .arg("restart")
@@ -367,7 +394,7 @@ async fn handle_restart_wield_service(cookies: Cookies) -> impl IntoResponse {
     StatusCode::UNAUTHORIZED
 }
 
-async fn handle_get_wield_status(cookies: Cookies) -> impl IntoResponse {
+async fn handle_get_wield_status(cookies: PrivateCookieJar) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         let output = Command::new("systemctl")
             .arg("show")
@@ -391,8 +418,8 @@ async fn handle_get_wield_status(cookies: Cookies) -> impl IntoResponse {
 }
 
 async fn handle_get_log_stream_status(
-    cookies: Cookies,
-    Extension(shared_state): Extension<Arc<Mutex<AppState>>>,
+    cookies: PrivateCookieJar,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         let shared_state_lock = shared_state.lock().unwrap();
