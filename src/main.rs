@@ -1,7 +1,6 @@
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -15,6 +14,7 @@ use axum::{
     Extension, Form, Router,
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
+use chrono::{TimeZone, Utc};
 use logwatcher::LogWatcher;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ use tokio::{
     sync::broadcast::{channel, Sender},
     time::{sleep, Instant},
 };
-use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt as _};
+use tokio_stream::Stream;
 
 pub type LogStream = Sender<String>;
 
@@ -121,6 +121,7 @@ async fn main() {
         .route("/stop-log-stream", put(handle_stop_log_stream))
         .route("/stream-logs", get(handle_stream_logs))
         .route("/log-stream/status", get(handle_get_log_stream_status))
+        .route("/wield/service/id", get(handle_get_wield_node_id))
         .route("/wield/service/version", get(handle_get_wield_version))
         .route("/wield/service/status", get(handle_get_wield_status))
         .route("/wield/service/start", post(handle_start_wield_service))
@@ -302,16 +303,14 @@ async fn handle_stream_logs(
             let shared_state = shared_state.clone();
             let is_authed = is_authed.clone();
             async move {
-                // This is where you process each message
-                // For example, you could send multiple events based on the message content
                 if is_authed {
                     if let Some(uptime_metrics) = parse_uptime_metrics_entry(msg.as_ref()) {
-                        println!("UPTIME METRICS: {:?}", uptime_metrics);
                         let event_data = format!("is_up: {}", uptime_metrics.is_up.to_string());
                         let event = Event::default().event("metric-is-up").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        let event_data = format!("start_ts: {}", uptime_metrics.start_ts.to_string());
+                        let start_date_time = Utc.timestamp_opt(uptime_metrics.start_ts as i64, 0);
+                        let event_data = format!("start_ts: {:?}", start_date_time);
                         let event = Event::default().event("metric-start-ts").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
@@ -323,10 +322,10 @@ async fn handle_stream_logs(
                         let event = Event::default().event("metric-uptime-added-ms").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
 
-                        let event_data = format!("last_successful_sync_ts: {}", uptime_metrics.last_successful_sync_ts.to_string());
+                        let last_successfull_sync_date_time = Utc.timestamp_opt(uptime_metrics.last_successful_sync_ts as i64, 0);
+                        let event_data = format!("start_ts: {:?}", last_successfull_sync_date_time);
                         let event = Event::default().event("metric-last-successful-sync-ts").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
-
                     }
 
                     let shared_state = shared_state.lock().unwrap().clone();
@@ -377,6 +376,42 @@ async fn handle_get_wield_version(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Version: WIELD BINARY NOT FOUND".to_string(),
+            );
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
+}
+
+async fn handle_get_wield_node_id(
+    cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+        let path_to_shdw_keygen_binary = "/home/dagger/shdw-keygen".to_string();
+
+        if Path::new(&path_to_shdw_keygen_binary).exists() {
+            let output = Command::new("/home/dagger/shdw-keygen")
+                .arg("pubkey")
+                .arg("/home/dagger/id.json")
+                .output()
+                .await
+                .expect(&format!(
+                    "Should successfully run wield --version from path {}",
+                    path_to_shdw_keygen_binary
+                ));
+
+            let output_stdout = String::from_utf8(output.stdout).unwrap();
+
+            if tx.send(output_stdout.clone()).is_err() {
+                eprintln!("Error sending cmd output across channel.");
+            };
+
+            return (StatusCode::OK, format!("Node ID: {}", output_stdout));
+        } else {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Version: shdw-keygen BINARY NOT FOUND".to_string(),
             );
         }
     }

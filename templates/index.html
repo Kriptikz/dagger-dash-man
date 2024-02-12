@@ -19,6 +19,7 @@
       </div>
     </div>
     <div id="wield-node-section-content">
+      <div id="wield-node-id" hx-get="/wield/service/id" hx-trigger="load" hx-swap="innerHTML">Node ID: Loading...</div>
       <div id="wield-version" hx-get="/wield/service/version" hx-trigger="load" hx-swap="innerHTML">Version: Loading...</div>
       <div id="wield-status" hx-get="/wield/service/status" hx-trigger="every 2s" hx-swap="innerHTML">Service Status: Loading...</div>
       <div id="wield-is-up" sse-swap="metric-is-up" hx-swap="innerHTML">is_up: Loading...</div>
