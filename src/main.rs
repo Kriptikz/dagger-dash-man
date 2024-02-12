@@ -7,7 +7,11 @@ use std::{
 
 use askama::Template;
 use axum::{
-    async_trait, extract::{FromRef, FromRequest, Request}, http::{header::CONTENT_TYPE, Response, StatusCode}, response::{sse::Event, IntoResponse, Redirect, Sse}, routing::{get, post, put}, Extension, Form, Json, RequestExt, Router
+    extract::FromRef,
+    http::{Response, StatusCode},
+    response::{sse::Event, IntoResponse, Sse},
+    routing::{get, post, put},
+    Extension, Form, Router,
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
 use logwatcher::LogWatcher;
@@ -173,7 +177,7 @@ async fn index(cookies: PrivateCookieJar) -> impl IntoResponse {
         return Ok(IndexTemplate);
     }
 
-    Err((StatusCode::UNAUTHORIZED, "Unauthorized"))
+    Err((StatusCode::UNAUTHORIZED, LoginTemplate))
 }
 
 #[derive(Template)]
@@ -248,10 +252,12 @@ fn verified_auth_token(token: String) -> bool {
     return false;
 }
 
-async fn handle_logout(
-    cookies: PrivateCookieJar,
-) -> impl IntoResponse {
-    (StatusCode::OK, cookies.remove(Cookie::from("auth_token")), LoginTemplate)
+async fn handle_logout(cookies: PrivateCookieJar) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        cookies.remove(Cookie::from("auth_token")),
+        LoginTemplate,
+    )
 }
 
 async fn handle_start_log_stream(
