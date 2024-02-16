@@ -3,7 +3,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use askama::Template;
@@ -26,7 +26,7 @@ use tokio::{
     io::AsyncWriteExt,
     process::Command,
     sync::broadcast::{channel, Sender},
-    time::{sleep, Instant},
+    time::{self, sleep, Instant},
 };
 use tokio_stream::Stream;
 
@@ -160,12 +160,14 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Listener bound to port 3000");
+    
+    let tx1 = tx.clone();
     tokio::spawn(async move {
         let path = "/home/dagger/config.log".to_string();
         loop {
             if Path::new(&path).exists() {
                 let mut log_watcher = LogWatcher::register(&path).unwrap();
-                let tx = tx.clone();
+                let tx = tx1.clone();
 
                 // simple subscriber used to ensure a constant reciever for this channel
                 // without this, the log_watcher tx.send doesn't make it to the
@@ -195,6 +197,7 @@ async fn main() {
     });
 
     // Wield binary handler
+    let tx2 = tx.clone();
     tokio::spawn(async move {
         let url = if let Some(url) = config.wield_binary_url {
             url
@@ -202,6 +205,7 @@ async fn main() {
             "https://shdw-drive.genesysgo.net/4xdLyZZJzL883AbiZvgyWKf2q55gcZiMgMkDNQMnyFJC/wield-latest".to_string()
         };
         let shared_state = shared_state.clone();
+        let tx = tx2.clone();
 
         loop {
             let last_known_modification = shared_state
@@ -213,15 +217,16 @@ async fn main() {
             let shared_state = shared_state.clone();
 
             if new_last_modified != last_known_modification {
-                let wield_binary_new_path = if let Some(url) = config.download_new_wield_binary_path.clone()
-                {
-                    url
-                } else {
-                    "/home/dagger/new-wield-binary/wield".to_string()
-                };
-                if let Ok(_) = 
-                download_new_wield_binary(&url, &wield_binary_new_path).await {
+                let wield_binary_new_path =
+                    if let Some(url) = config.download_new_wield_binary_path.clone() {
+                        url
+                    } else {
+                        "/home/dagger/new-wield-binary/wield".to_string()
+                    };
+                if let Ok(_) = download_new_wield_binary(&url, &wield_binary_new_path).await {
                     println!("Downloaded new binary");
+                    let tx = tx.clone();
+                    let _ = tx.send("toast-event -- Downloaded a new wield binary".to_string());
                 }
 
                 tokio::spawn(async move {
@@ -332,11 +337,15 @@ async fn handle_logout(cookies: PrivateCookieJar) -> impl IntoResponse {
 
 async fn handle_start_log_stream(
     cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
     Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         let mut shared_state_lock = shared_state.lock().unwrap();
         shared_state_lock.stream_logs_toggle = true;
+
+        let tx = tx.clone();
+        let _ = tx.send("toast-event -- Started log stream".to_string());
         return Ok(StatusCode::OK);
     }
     Err((StatusCode::UNAUTHORIZED, "Unauthorized"))
@@ -344,11 +353,15 @@ async fn handle_start_log_stream(
 
 async fn handle_stop_log_stream(
     cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
     Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         let mut shared_state_lock = shared_state.lock().unwrap();
         shared_state_lock.stream_logs_toggle = false;
+        let tx = tx.clone();
+
+        let _ = tx.send("toast-event -- Stopped log stream".to_string());
         return Ok(StatusCode::OK);
     } else {
         Err((StatusCode::UNAUTHORIZED, "Unauthorized"))
@@ -411,6 +424,20 @@ async fn handle_stream_logs(
                             .data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
                     }
+                    
+
+                    let split_msg: Vec<&str> = msg.split(" -- ").collect();
+
+                    if split_msg.len() > 1 {
+                        let prefix = split_msg[0];
+                        if prefix == "toast-event" {
+                            let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
+                            let toast_message = format!("<div _=\"on load wait 2s then remove me\" class=\"toast\" id=\"toast-{}\" onclick=\"removeMe(this)\">{}</div>", now, split_msg[1].clone());
+                            let event = Event::default().event("toast-event").data(toast_message);
+                            let _ = tx_new_clone.send(Ok(event)).await;
+                        }
+                    }
+
 
                     let shared_state = shared_state.lock().unwrap().clone();
                     if shared_state.stream_logs_toggle {
@@ -418,6 +445,7 @@ async fn handle_stream_logs(
                         let event_data = format!("<div>{}</div>", msg);
                         let event = Event::default().event("log-stream").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
+
                     }
                 }
             }
@@ -433,7 +461,8 @@ async fn handle_stream_logs(
     )
 }
 
-async fn handle_get_wield_version(cookies: PrivateCookieJar,
+async fn handle_get_wield_version(
+    cookies: PrivateCookieJar,
     Extension(config): Extension<Config>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
@@ -534,7 +563,10 @@ async fn handle_get_wield_node_id(
     (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
 }
 
-async fn handle_start_wield_service(cookies: PrivateCookieJar) -> impl IntoResponse {
+async fn handle_start_wield_service(
+    cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
+) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         Command::new("systemctl")
             .arg("start")
@@ -543,13 +575,18 @@ async fn handle_start_wield_service(cookies: PrivateCookieJar) -> impl IntoRespo
             .await
             .expect("Should successfully run shell command");
 
+        let tx = tx.clone();
+        let _ = tx.send("toast-event -- Started wield node".to_string());
         return StatusCode::OK;
     }
 
     StatusCode::UNAUTHORIZED
 }
 
-async fn handle_stop_wield_service(cookies: PrivateCookieJar) -> impl IntoResponse {
+async fn handle_stop_wield_service(
+    cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
+) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         Command::new("systemctl")
             .arg("stop")
@@ -558,13 +595,18 @@ async fn handle_stop_wield_service(cookies: PrivateCookieJar) -> impl IntoRespon
             .await
             .expect("Should successfully run shell command");
 
+        let tx = tx.clone();
+        let _ = tx.send("toast-event -- Stopped wield node".to_string());
         return StatusCode::OK;
     }
 
     StatusCode::UNAUTHORIZED
 }
 
-async fn handle_restart_wield_service(cookies: PrivateCookieJar) -> impl IntoResponse {
+async fn handle_restart_wield_service(
+    cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
+) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
         Command::new("systemctl")
             .arg("restart")
@@ -573,6 +615,8 @@ async fn handle_restart_wield_service(cookies: PrivateCookieJar) -> impl IntoRes
             .await
             .expect("Should successfully run shell command");
 
+        let tx = tx.clone();
+        let _ = tx.send("toast-event -- Restarted wield node".to_string());
         return StatusCode::OK;
     }
     StatusCode::UNAUTHORIZED

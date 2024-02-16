@@ -30,3 +30,9 @@ function toggleCheckbox(element) {
     observer.observe(document.getElementById('log-container'), config);
   }
 }
+
+// handle toast removal
+function removeMe(element) {
+  element.remove();
+}
+

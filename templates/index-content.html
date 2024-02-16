@@ -3,19 +3,20 @@
   hx-ext="sse"
   sse-connect="/stream-logs"
 >
-  <button id="logout" hx-put="/logout" hx-trigger="click" hx-target="body" hx-redirect-url="/login" hx-swap="outerHTML">Logout</button>
+  <div id="toast-container" sse-swap="toast-event" hx-swap="beforeend"></div>
+  <button id="logout" hx-put="/logout" hx-trigger="click" hx-target="#content" hx-redirect-url="/login" hx-swap="outerHTML" hx-confirm="Are you sure you want to logout?">Logout</button>
   <div id="wield-node-status">
     <div id="node-title-buttons-wrapper">
       <div class="section-title">Wield Node</div>
       <div id="wield-node-status-buttons">
-        <button id="button-start-service" hx-post="/wield/service/start" hx-trigger="click" hx-swap="none">Start Wield Service</button>
-        <button id="button-stop-service" hx-post="/wield/service/stop" hx-trigger="click" hx-swap="none">Stop Wield Service</button>
-        <button id="button-restart-service" hx-post="/wield/service/restart" hx-trigger="click" hx-swap="none">Restart Wield Service</button>
+        <button id="button-start-service" hx-disabled-elt="this" hx-post="/wield/service/start" hx-trigger="click" hx-swap="none" hx-confirm="Are you sure you want to start the wield-node?">Start Wield Service</button>
+        <button id="button-stop-service" hx-disabled-elt="this" hx-post="/wield/service/stop" hx-trigger="click" hx-swap="none" hx-confirm="Are you sure you want to stop the wield-node?">Stop Wield Service</button>
+        <button id="button-restart-service" hx-disabled-elt="this" hx-post="/wield/service/restart" hx-trigger="click" hx-swap="none" hx-confirm="Are you sure you want to restart the wield-node?">Restart Wield Service</button>
       </div>
     </div>
     <div id="wield-node-section-content">
       <div id="wield-node-id" hx-get="/wield/service/id" hx-trigger="load" hx-swap="innerHTML">Node ID: Loading...</div>
-      <div id="wield-version" hx-get="/wield/service/version" hx-trigger="load" hx-swap="innerHTML">Version: Loading...</div>
+      <div id="wield-version" hx-get="/wield/service/version" hx-trigger="every 2s" hx-swap="innerHTML">Version: Loading...</div>
       <div id="wield-status" hx-get="/wield/service/status" hx-trigger="every 2s" hx-swap="innerHTML">Service Status: Loading...</div>
       <div id="wield-is-up" sse-swap="metric-is-up" hx-swap="innerHTML">is_up: Loading...</div>
       <div id="wield-start-ts" sse-swap="metric-start-ts" hx-swap="innerHTML">start_ts: Loading...</div>
@@ -28,8 +29,8 @@
     <div id="logs-title-buttons-wrapper">
       <div class="section-title">Logs</div>
       <div id="live-logs-buttons">
-        <button id="startButton" hx-put="/start-log-stream" hx-trigger="click" hx-swap="none">Start Log Stream</button>
-        <button id="stopButton" hx-put="/stop-log-stream" hx-trigger="click" hx-swap="none">Stop Log Stream</button>
+        <button id="startButton" hx-put="/start-log-stream" hx-disabled-elt="this" hx-trigger="click" hx-swap="none">Start Log Stream</button>
+        <button id="stopButton" hx-put="/stop-log-stream" hx-disabled-elt="this" hx-trigger="click" hx-swap="none">Stop Log Stream</button>
         <label>
             <input type="checkbox" id="toggle-scroll" onchange="toggleCheckbox(this)"> Always scroll to bottom
         </label>

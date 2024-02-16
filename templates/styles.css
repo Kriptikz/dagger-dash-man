@@ -15,6 +15,40 @@ body {
   font-family: Arial, sans-serif; /* Improve readability */
 }
 
+#toast-container {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  z-index: 1000; /* Ensure it's above other content */
+}
+
+.toast {
+  background-color: #78aafa;
+  color: #333; /* Dark text color for readability */
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  border: 1px solid #ccc;
+}
+/*
+  opacity: 0;
+  transform: translateX(100px);
+  transition: opacity 0.5s, transform 0.5s;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(0);
+}
+*/
+
+#logout {
+  margin-top: 20px;
+}
+
 #sse-container {
   display: flex;
   flex-direction: column;
