@@ -742,7 +742,7 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     let matches = set.matches(entry);
 
     // Ensure all fields are present
-    if matches.iter().count() < 6 {
+    if matches.iter().count() < 5 {
         return None; // Not all fields are present, so exit early
     }
 
