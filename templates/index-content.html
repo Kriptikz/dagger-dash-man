@@ -13,12 +13,14 @@
         <button id="button-stop-service" hx-disabled-elt="this" hx-post="/wield/service/stop" hx-trigger="click" hx-swap="none" hx-confirm="Are you sure you want to stop the wield-node?">Stop Wield Service</button>
         <button id="button-restart-service" hx-disabled-elt="this" hx-post="/wield/service/restart" hx-trigger="click" hx-swap="none" hx-confirm="Are you sure you want to restart the wield-node?">Restart Wield Service</button>
         <button id="button-update-service" hx-disabled-elt="this" hx-post="/wield/service/update" hx-trigger="click" hx-swap="none" hx-confirm="Are you sure you want to update the wield-node?">Update Wield Service</button>
+        <button id="button-toggle-auto-update" hx-post="/wield/service/toggle-auto-update" hx-disabled-elt="this" hx-trigger="click" hx-swap="none">Toggle Auto Update</button>
       </div>
     </div>
     <div id="wield-node-section-content">
       <div id="wield-node-id" hx-get="/wield/service/id" hx-trigger="load" hx-swap="innerHTML">Node ID: Loading...</div>
       <div id="wield-version" hx-get="/wield/service/version" hx-trigger="every 2s" hx-swap="innerHTML">Version: Loading...</div>
       <div id="wield-status" hx-get="/wield/service/status" hx-trigger="every 2s" hx-swap="innerHTML">Service Status: Loading...</div>
+      <div id="wield-auto-update-status" hx-get="/wield/service/auto-update-status" hx-trigger="every 2s" hx-swap="innerHTML">Auto-Update: Loading...</div>
       <div id="wield-is-up" sse-swap="metric-is-up" hx-swap="innerHTML">is_up: Loading...</div>
       <div id="wield-start-ts" sse-swap="metric-start-ts" hx-swap="innerHTML">start_ts: Loading...</div>
       <div id="wield-current-uptime-ms" sse-swap="metric-current-uptime-ms" hx-swap="innerHTML">current_uptime_ms: Loading...</div>

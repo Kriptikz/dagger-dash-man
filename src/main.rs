@@ -36,6 +36,7 @@ pub type LogStream = Sender<String>;
 struct SharedState {
     stream_logs_toggle: bool,
     last_known_modification: String,
+    auto_update: bool,
 }
 
 #[derive(Clone)]
@@ -129,6 +130,7 @@ async fn main() {
     let shared_state = Arc::new(Mutex::new(SharedState {
         stream_logs_toggle: false,
         last_known_modification: "".to_string(),
+        auto_update: false,
     }));
 
     let app_state = AppState {
@@ -154,6 +156,11 @@ async fn main() {
         .route("/wield/service/stop", post(handle_stop_wield_service))
         .route("/wield/service/restart", post(handle_restart_wield_service))
         .route("/wield/service/update", post(handle_update_wield_service))
+        .route(
+            "/wield/service/toggle-auto-update",
+            post(handle_toggle_auto_update),
+        )
+        .route("/wield/service/auto-update-status", get(handle_get_auto_update_status))
         .layer(Extension(tx.clone()))
         .layer(Extension(shared_state.clone()))
         .layer(Extension(config.clone()))
@@ -199,14 +206,17 @@ async fn main() {
 
     // Wield binary handler
     let tx2 = tx.clone();
+    let shared_state2 = shared_state.clone();
+    let config2 = config.clone();
     tokio::spawn(async move {
+        let shared_state = shared_state2.clone();
+        let tx = tx2.clone();
+        let config = config2.clone();
         let url = if let Some(url) = config.wield_binary_url {
             url
         } else {
             "https://shdw-drive.genesysgo.net/4xdLyZZJzL883AbiZvgyWKf2q55gcZiMgMkDNQMnyFJC/wield-latest".to_string()
         };
-        let shared_state = shared_state.clone();
-        let tx = tx2.clone();
 
         loop {
             let last_known_modification = shared_state
@@ -238,6 +248,122 @@ async fn main() {
             }
 
             sleep(Duration::from_millis(5000)).await;
+        }
+    });
+
+    let tx3 = tx.clone();
+    let shared_state3 = shared_state.clone();
+    let config3 = config.clone();
+    tokio::spawn(async move {
+        let shared_state = shared_state3.clone();
+        let tx = tx3.clone();
+        let config = config3.clone();
+
+        loop {
+            let auto_update_enabled = shared_state.lock().unwrap().auto_update;
+            let config = config.clone();
+
+            if auto_update_enabled {
+                // check versions
+                let path_to_wield_binary = if let Some(path) = config.wield_binary_path.clone() {
+                    path
+                } else {
+                    "/home/dagger/wield".to_string()
+                };
+                let path_to_updated_wield_binary =
+                    if let Some(path) = config.wield_binary_path.clone() {
+                        path
+                    } else {
+                        "/home/dagger/new-wield-binary/wield".to_string()
+                    };
+                if Path::new(&path_to_wield_binary).exists() {
+                    let output = Command::new(path_to_wield_binary.clone())
+                        .arg("--version")
+                        .output()
+                        .await
+                        .expect(&format!(
+                            "Should successfully run wield --version from path {}",
+                            path_to_wield_binary
+                        ));
+
+                    let current_binary_version = String::from_utf8(output.stdout).unwrap();
+
+                    if Path::new(&path_to_updated_wield_binary).exists() {
+                        let output = Command::new(path_to_updated_wield_binary)
+                            .arg("--version")
+                            .output()
+                            .await;
+                        if let Ok(output) = output {
+                            let new_binary_version = String::from_utf8(output.stdout).unwrap();
+                            if current_binary_version != new_binary_version {
+                                Command::new("systemctl")
+                                    .arg("stop")
+                                    .arg("wield")
+                                    .output()
+                                    .await
+                                    .expect("Should successfully run shell command");
+
+                                let _ = tx.send(
+                                    "toast-event -- Stopped wield node for auto-update".to_string(),
+                                );
+                                let backup_binary_path =
+                                    if let Some(url) = config.wield_binary_path.clone() {
+                                        url
+                                    } else {
+                                        "/home/dagger/wield-binary-backup/wield".to_string()
+                                    };
+
+                                if let Ok(_) = backup_current_version(
+                                    &path_to_wield_binary,
+                                    &backup_binary_path,
+                                )
+                                .await
+                                {
+                                    let new_binary_path = if let Some(new_path) =
+                                        config.download_new_wield_binary_path
+                                    {
+                                        new_path
+                                    } else {
+                                        "/home/dagger/new-wield-binary/wield".to_string()
+                                    };
+
+                                    if let Ok(_) =
+                                        copy_binary(&new_binary_path, &path_to_wield_binary).await
+                                    {
+                                        let _ = tx.send(
+                                            "toast-event -- New binary update successfull!"
+                                                .to_string(),
+                                        );
+                                        Command::new("systemctl")
+                                            .arg("start")
+                                            .arg("wield")
+                                            .output()
+                                            .await
+                                            .expect("Should successfully run shell command");
+                                        let _ = tx.send(
+                                            "toast-event -- Successfully updated wield service!"
+                                                .to_string(),
+                                        );
+                                    } else {
+                                        let _ = tx.send(
+                                            "toast-event -- Failed to update to new binary"
+                                                .to_string(),
+                                        );
+                                    }
+                                } else {
+                                    let _ = tx.send(
+                                        "toast-event -- Failed to backup current binary"
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                }
+            }
+
+            sleep(Duration::from_millis(1000)).await;
         }
     });
 
@@ -678,6 +804,27 @@ async fn handle_update_wield_service(
     }
     StatusCode::UNAUTHORIZED
 }
+async fn handle_toggle_auto_update(
+    cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+        let mut shared_state = shared_state.lock().unwrap();
+
+        shared_state.auto_update = !shared_state.auto_update;
+
+        let tx = tx.clone();
+        if shared_state.auto_update {
+            let _ = tx.send("toast-event -- Auto Update Enabled".to_string());
+        } else {
+            let _ = tx.send("toast-event -- Auto Update Enabled".to_string());
+        }
+
+        return StatusCode::OK;
+    }
+    StatusCode::UNAUTHORIZED
+}
 
 async fn handle_get_wield_status(cookies: PrivateCookieJar) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
@@ -697,6 +844,24 @@ async fn handle_get_wield_status(cookies: PrivateCookieJar) -> impl IntoResponse
         return (
             StatusCode::OK,
             format!("Service Status: {}", split_output.last().unwrap()),
+        );
+    }
+    (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
+}
+
+async fn handle_get_auto_update_status(cookies: PrivateCookieJar, 
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+        let status;
+        if shared_state.clone().lock().unwrap().auto_update {
+            status = "enabled";
+        } else {
+            status = "disabled";
+        }
+        return (
+            StatusCode::OK,
+            format!("Auto-Update: {}", status),
         );
     }
     (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
