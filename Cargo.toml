@@ -20,3 +20,4 @@ tower-http = { version = "0.5.1", features = ["cors", "fs"] }
 regex = "1.10.3"
 chrono = "0.4.34"
 passwords = "3.1.16"
+reqwest = "0.11.24"

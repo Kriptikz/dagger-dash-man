@@ -1,5 +1,6 @@
 use std::{
     convert::Infallible,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -18,6 +19,7 @@ use chrono::{TimeZone, Utc};
 use logwatcher::LogWatcher;
 use passwords::PasswordGenerator;
 use regex::{Regex, RegexSet};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs,
@@ -33,6 +35,7 @@ pub type LogStream = Sender<String>;
 #[derive(Clone)]
 struct SharedState {
     stream_logs_toggle: bool,
+    last_known_modification: String,
 }
 
 #[derive(Clone)]
@@ -49,6 +52,9 @@ impl FromRef<AppState> for Key {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Config {
     password: String,
+    wield_binary_url: Option<String>,
+    wield_binary_path: Option<String>,
+    download_new_wield_binary_path: Option<String>,
 }
 async fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
     let mut config_path = PathBuf::new();
@@ -76,7 +82,12 @@ async fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
             .generate_one()
             .expect("Should succesfully generate a new password when creating a new config.");
 
-        let default_config = Config { password: new_password };
+        let default_config = Config {
+            password: new_password,
+            wield_binary_url: None,
+            wield_binary_path: None,
+            download_new_wield_binary_path: None,
+        };
 
         // Serialize the default configuration to TOML
         let toml = toml::to_string(&default_config)?;
@@ -117,6 +128,7 @@ async fn main() {
 
     let shared_state = Arc::new(Mutex::new(SharedState {
         stream_logs_toggle: false,
+        last_known_modification: "".to_string(),
     }));
 
     let app_state = AppState {
@@ -142,8 +154,8 @@ async fn main() {
         .route("/wield/service/stop", post(handle_stop_wield_service))
         .route("/wield/service/restart", post(handle_restart_wield_service))
         .layer(Extension(tx.clone()))
-        .layer(Extension(shared_state))
-        .layer(Extension(config))
+        .layer(Extension(shared_state.clone()))
+        .layer(Extension(config.clone()))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -179,6 +191,47 @@ async fn main() {
                 eprintln!("File does not exist, re-checking in 2 seconds.");
                 sleep(Duration::from_millis(2000)).await;
             }
+        }
+    });
+
+    // Wield binary handler
+    tokio::spawn(async move {
+        let url = if let Some(url) = config.wield_binary_url {
+            url
+        } else {
+            "https://shdw-drive.genesysgo.net/4xdLyZZJzL883AbiZvgyWKf2q55gcZiMgMkDNQMnyFJC/wield-latest".to_string()
+        };
+        let shared_state = shared_state.clone();
+
+        loop {
+            let last_known_modification = shared_state
+                .lock()
+                .unwrap()
+                .last_known_modification
+                .to_string();
+            let new_last_modified = get_last_modified(&url).await;
+            let shared_state = shared_state.clone();
+
+            if new_last_modified != last_known_modification {
+                let wield_binary_new_path = if let Some(url) = config.download_new_wield_binary_path.clone()
+                {
+                    url
+                } else {
+                    "/home/dagger/new-wield-binary/wield".to_string()
+                };
+                if let Ok(_) = 
+                download_new_wield_binary(&url, &wield_binary_new_path).await {
+                    println!("Downloaded new binary");
+                }
+
+                tokio::spawn(async move {
+                    let shared_state = shared_state.clone();
+                    let mut shared_state = shared_state.lock().unwrap();
+                    shared_state.last_known_modification = new_last_modified;
+                });
+            }
+
+            sleep(Duration::from_millis(5000)).await;
         }
     });
 
@@ -361,7 +414,7 @@ async fn handle_stream_logs(
 
                     let shared_state = shared_state.lock().unwrap().clone();
                     if shared_state.stream_logs_toggle {
-                        let msg = msg;
+                        let msg = msg.clone();
                         let event_data = format!("<div>{}</div>", msg);
                         let event = Event::default().event("log-stream").data(event_data);
                         let _ = tx_new_clone.send(Ok(event)).await;
@@ -380,15 +433,23 @@ async fn handle_stream_logs(
     )
 }
 
-async fn handle_get_wield_version(
-    cookies: PrivateCookieJar,
-    Extension(tx): Extension<LogStream>,
+async fn handle_get_wield_version(cookies: PrivateCookieJar,
+    Extension(config): Extension<Config>,
 ) -> impl IntoResponse {
     if has_valid_auth_token(cookies) {
-        let path_to_wield_binary = "/home/dagger/wield".to_string();
+        let path_to_wield_binary = if let Some(path) = config.wield_binary_path.clone() {
+            path
+        } else {
+            "/home/dagger/wield".to_string()
+        };
+        let path_to_updated_wield_binary = if let Some(path) = config.wield_binary_path {
+            path
+        } else {
+            "/home/dagger/new-wield-binary/wield".to_string()
+        };
 
         if Path::new(&path_to_wield_binary).exists() {
-            let output = Command::new("/home/dagger/wield")
+            let output = Command::new(path_to_wield_binary.clone())
                 .arg("--version")
                 .output()
                 .await
@@ -399,11 +460,27 @@ async fn handle_get_wield_version(
 
             let output_stdout = String::from_utf8(output.stdout).unwrap();
 
-            if tx.send(output_stdout.clone()).is_err() {
-                eprintln!("Error sending cmd output across channel.");
-            };
+            let mut response = output_stdout.to_string();
 
-            return (StatusCode::OK, format!("Version: {}", output_stdout));
+            if Path::new(&path_to_updated_wield_binary).exists() {
+                let output = Command::new(path_to_updated_wield_binary)
+                    .arg("--version")
+                    .output()
+                    .await
+                    .expect(&format!(
+                        "Should successfully run wield --version from path {}",
+                        path_to_wield_binary
+                    ));
+
+                response = format!(
+                    "{} {}: {}",
+                    output_stdout,
+                    "**NEW VERSION UPDATE AVAILABLE",
+                    String::from_utf8(output.stdout).unwrap()
+                );
+            }
+
+            return (StatusCode::OK, format!("Version: {}", response));
         } else {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -543,7 +620,6 @@ async fn handle_get_log_stream_status(
 
 #[derive(Debug)]
 struct UptimeMetrics {
-    node_id: String,
     is_up: bool,
     start_ts: u64,
     current_uptime_ms: u64,
@@ -554,7 +630,6 @@ struct UptimeMetrics {
 fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     // Step 1: Check for the presence of fields using RegexSet
     let set = RegexSet::new(&[
-        r#"node_id="(?P<node_id>[^\"]+)""#,
         r"is_up=(true|false)",
         r"start_ts=\d+",
         r"current_uptime_ms=\d+",
@@ -571,7 +646,6 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     }
 
     // Step 2: Extract values for each field
-    let node_id_re = Regex::new(r#"node_id="(?P<node_id>[^"]+)""#).unwrap();
     let is_up_re = Regex::new(r"is_up=(?P<is_up>true|false)").unwrap();
     let start_ts_re = Regex::new(r"start_ts=(?P<start_ts>\d+)").unwrap();
     let current_uptime_ms_re = Regex::new(r"current_uptime_ms=(?P<current_uptime_ms>\d+)").unwrap();
@@ -580,11 +654,6 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
         Regex::new(r"last_successful_sync_ts=(?P<last_successful_sync_ts>\d+)").unwrap();
 
     // Extracting each field
-    let node_id = node_id_re
-        .captures(entry)?
-        .name("node_id")?
-        .as_str()
-        .to_string();
     let is_up = is_up_re
         .captures(entry)?
         .name("is_up")?
@@ -618,7 +687,6 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
 
     // Construct and return the UptimeMetrics struct if all fields were successfully extracted
     Some(UptimeMetrics {
-        node_id,
         is_up,
         start_ts,
         current_uptime_ms,
@@ -627,32 +695,69 @@ fn parse_uptime_metrics_entry(entry: &str) -> Option<UptimeMetrics> {
     })
 }
 
-fn parse_node_id(entry: &str) -> Option<String> {
-    let re = Regex::new(r#"node_id="(?P<node_id>[^\"]+)""#).unwrap();
-    let caps = re.captures(entry)?;
+async fn get_last_modified(url: &str) -> String {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
 
-    caps.name("node_id")
-        .map(|match_| match_.as_str().to_string())
+    let response = client.head(url).send().await.unwrap();
+
+    if response.status().is_success() {
+        if let Some(last_modified) = response.headers().get("Last-Modified") {
+            let last_modified_str = last_modified.to_str().unwrap();
+            return last_modified_str.to_string();
+        }
+    }
+
+    // If the request failed or the Last-Modified header is not present, handle accordingly
+    "".to_string()
+}
+
+async fn backup_current_version(current_binary_path: &str, backup_path: &str) -> Result<(), ()> {
+    // Ensure the backup directory exists
+    if let Some(parent) = Path::new(backup_path).parent() {
+        if let Err(_) = fs::create_dir_all(parent).await {
+            return Err(());
+        }
+    }
+
+    // Copy the current binary to the backup location
+    if let Err(_) = fs::copy(current_binary_path, backup_path).await {
+        return Err(());
+    }
+
+    Ok(())
+}
+
+async fn download_new_wield_binary(binary_url: &str, download_path: &str) -> Result<(), ()> {
+    let response = reqwest::get(binary_url).await.unwrap();
+    let content = response.bytes().await.unwrap();
+
+    let wield_binary_new_path = download_path;
+    if let Some(parent) = Path::new(wield_binary_new_path).parent() {
+        if let Err(_) = fs::create_dir_all(parent).await {
+            return Err(());
+        }
+    }
+
+    let mut f = fs::File::create(wield_binary_new_path).await.unwrap();
+    f.write_all(&content).await.unwrap();
+
+    let mut perms = fs::metadata(wield_binary_new_path)
+        .await
+        .unwrap()
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(wield_binary_new_path, perms)
+        .await
+        .unwrap();
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_node_id() {
-        let log_entry = r#"2024-02-12T04:51:13.833282570+00:00 [INFO] dagger_logger::metrics - datapoint: uptime_metrics node_id="AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn" is_up=true start_ts=1707713462233 current_uptime_ms=11599 uptime_added_ms=5000 last_successful_sync_ts=1707713473740"#;
-        let parsed_metrics = parse_node_id(log_entry);
-
-        assert!(
-            parsed_metrics.is_some(),
-            "The parser should successfully extract node id."
-        );
-
-        let metrics = parsed_metrics.unwrap();
-
-        assert_eq!(metrics, "AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn");
-    }
 
     #[test]
     fn test_parse_uptime_metrics_entry() {
@@ -666,10 +771,6 @@ mod tests {
 
         let metrics = parsed_metrics.unwrap();
 
-        assert_eq!(
-            metrics.node_id,
-            "AzrAW1uLjrV9nuDZyCD1nmoRovbyPyXWYWQ12goZedhn"
-        );
         assert_eq!(metrics.is_up, true);
         assert_eq!(metrics.start_ts, 1707713462233);
         assert_eq!(metrics.current_uptime_ms, 11599);

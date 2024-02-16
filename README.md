@@ -29,6 +29,16 @@ This project is currently **EXPERIMENTAL** and **WIP**. Use at your own discreti
 
 
 ## Installation
+
+- Download the binary from: TODO.
+- If you are building from source, install the rust toolchain and use `cargo build --release`
+  - You may need to install `libssl-dev` or others in order to build it. The error messages 
+from cargo will tell you.
+
+- Once you have the binary, follow the NGINX and DNS setup below to ensure you are 
+connecting to the web server securely.
+
+- After finishing the NGINX and DNS setup, read over the Running this web server section.
  
 ### NGINX and DNS
 
@@ -108,7 +118,12 @@ TTL: Auto or Default of 36000
     sudo systemctl reload nginx
     ```
 ### Running this web server.
+  - Download/Build the binary and run it however you want.
 
+  - TODO: Setting it up as a systemd service.
+
+
+#### Sudo notes
   - running systemctl commands requires `sudo`. Which means when running this service
 if the start, stop, or restart commands are issued the web server will request a
 password to authenticate and run that command. This defeats the whole purpose though,
