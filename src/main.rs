@@ -26,7 +26,7 @@ use tokio::{
     io::AsyncWriteExt,
     process::Command,
     sync::broadcast::{channel, Sender},
-    time::{self, sleep, Instant},
+    time::{sleep, Instant},
 };
 use tokio_stream::Stream;
 
@@ -153,6 +153,7 @@ async fn main() {
         .route("/wield/service/start", post(handle_start_wield_service))
         .route("/wield/service/stop", post(handle_stop_wield_service))
         .route("/wield/service/restart", post(handle_restart_wield_service))
+        .route("/wield/service/update", post(handle_update_wield_service))
         .layer(Extension(tx.clone()))
         .layer(Extension(shared_state.clone()))
         .layer(Extension(config.clone()))
@@ -160,7 +161,7 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Listener bound to port 3000");
-    
+
     let tx1 = tx.clone();
     tokio::spawn(async move {
         let path = "/home/dagger/config.log".to_string();
@@ -432,7 +433,7 @@ async fn handle_stream_logs(
                         let prefix = split_msg[0];
                         if prefix == "toast-event" {
                             let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
-                            let toast_message = format!("<div _=\"on load wait 2s then remove me\" class=\"toast\" id=\"toast-{}\" onclick=\"removeMe(this)\">{}</div>", now, split_msg[1].clone());
+                            let toast_message = format!("<div _=\"on load wait 2s then remove me\" class=\"toast\" id=\"toast-{}\" onclick=\"removeMe(this)\">{}</div>", now, split_msg[1]);
                             let event = Event::default().event("toast-event").data(toast_message);
                             let _ = tx_new_clone.send(Ok(event)).await;
                         }
@@ -487,26 +488,26 @@ async fn handle_get_wield_version(
                     path_to_wield_binary
                 ));
 
-            let output_stdout = String::from_utf8(output.stdout).unwrap();
+            let current_binary_version = String::from_utf8(output.stdout).unwrap();
 
-            let mut response = output_stdout.to_string();
+            let mut response = current_binary_version.to_string();
 
             if Path::new(&path_to_updated_wield_binary).exists() {
                 let output = Command::new(path_to_updated_wield_binary)
                     .arg("--version")
                     .output()
-                    .await
-                    .expect(&format!(
-                        "Should successfully run wield --version from path {}",
-                        path_to_wield_binary
-                    ));
-
-                response = format!(
-                    "{} {}: {}",
-                    output_stdout,
-                    "**NEW VERSION UPDATE AVAILABLE",
-                    String::from_utf8(output.stdout).unwrap()
-                );
+                    .await;
+                if let Ok(output) = output {
+                    let new_binary_version = String::from_utf8(output.stdout).unwrap();
+                    if current_binary_version != new_binary_version {
+                        response = format!(
+                            "{} {}: {}",
+                            current_binary_version,
+                            "**NEW VERSION UPDATE AVAILABLE",
+                            new_binary_version
+                        );
+                    }
+                }
             }
 
             return (StatusCode::OK, format!("Version: {}", response));
@@ -617,6 +618,62 @@ async fn handle_restart_wield_service(
 
         let tx = tx.clone();
         let _ = tx.send("toast-event -- Restarted wield node".to_string());
+        return StatusCode::OK;
+    }
+    StatusCode::UNAUTHORIZED
+}
+
+async fn handle_update_wield_service(
+    cookies: PrivateCookieJar,
+    Extension(config): Extension<Config>,
+    Extension(tx): Extension<LogStream>,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+        Command::new("systemctl")
+            .arg("stop")
+            .arg("wield")
+            .output()
+            .await
+            .expect("Should successfully run shell command");
+
+        let tx = tx.clone();
+        let _ = tx.send("toast-event -- Stopped wield node for update".to_string());
+
+        let current_binary_path = if let Some(url) = config.wield_binary_path.clone() {
+            url
+        } else {
+            "/home/dagger/wield".to_string()
+        };
+
+        let backup_binary_path = if let Some(url) = config.wield_binary_path.clone() {
+            url
+        } else {
+            "/home/dagger/wield-binary-backup/wield".to_string()
+        };
+
+        if let Ok(_) = backup_current_version(&current_binary_path, &backup_binary_path).await {
+            let new_binary_path = if let Some(new_path) = config.download_new_wield_binary_path {
+                new_path
+            } else {
+                "/home/dagger/new-wield-binary/wield".to_string()
+            };
+
+            if let Ok(_) = copy_binary(&new_binary_path, &current_binary_path).await {
+                let _ = tx.send("toast-event -- New binary update successfull!".to_string());
+                Command::new("systemctl")
+                    .arg("start")
+                    .arg("wield")
+                    .output()
+                    .await
+                    .expect("Should successfully run shell command");
+                let _ = tx.send("toast-event -- Successfully updated wield service!".to_string());
+            } else {
+                let _ = tx.send("toast-event -- Failed to update to new binary".to_string());
+            }
+        } else {
+            let _ = tx.send("toast-event -- Failed to backup current binary".to_string());
+        }
+
         return StatusCode::OK;
     }
     StatusCode::UNAUTHORIZED
@@ -759,15 +816,18 @@ async fn get_last_modified(url: &str) -> String {
 }
 
 async fn backup_current_version(current_binary_path: &str, backup_path: &str) -> Result<(), ()> {
-    // Ensure the backup directory exists
-    if let Some(parent) = Path::new(backup_path).parent() {
+    return copy_binary(current_binary_path, backup_path).await;
+}
+
+async fn copy_binary(from_path: &str, to_path: &str) -> Result<(), ()> {
+    if let Some(parent) = Path::new(to_path).parent() {
         if let Err(_) = fs::create_dir_all(parent).await {
             return Err(());
         }
     }
 
     // Copy the current binary to the backup location
-    if let Err(_) = fs::copy(current_binary_path, backup_path).await {
+    if let Err(_) = fs::copy(from_path, to_path).await {
         return Err(());
     }
 

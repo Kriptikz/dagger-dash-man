@@ -14,6 +14,10 @@ This project is currently **EXPERIMENTAL** and **WIP**. Use at your own discreti
 - Management Buttons:
   - Stop Wield Node service
   - Start Wield Node service
+  - Update Wield Node Binary and Restart service. New wield node binaries will automatically be 
+downloaded while this service is running. Wield Node Version will be updated with 
+`**NEW VERSION AVAILABLE` and the new version value. If there is a new version available, 
+simply click the `Update Wield Service` button to update to the new version and restart the service.
 
 
 
@@ -21,7 +25,7 @@ This project is currently **EXPERIMENTAL** and **WIP**. Use at your own discreti
 
 - Show last released Wield Node version.
 - Management Buttons:
-  - Update Wield Node/ wield-installer
+  - Update wield-installer
   - Clear history_db
   - Clear peers_db
   - Install Wield Node/ wield-installer
