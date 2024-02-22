@@ -8,14 +8,10 @@ use std::{
 
 use askama::Template;
 use axum::{
-    extract::FromRef,
-    http::{Response, StatusCode},
-    response::{sse::Event, IntoResponse, Sse},
-    routing::{get, post, put},
-    Extension, Form, Router,
+    extract::FromRef, http::{Response, StatusCode}, response::{sse::Event, IntoResponse, Sse}, routing::{get, post, put}, Extension, Form, Router
 };
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use logwatcher::LogWatcher;
 use passwords::PasswordGenerator;
 use regex::{Regex, RegexSet};
@@ -30,12 +26,23 @@ use tokio::{
 };
 use tokio_stream::Stream;
 
+use crate::dagger_commands::DaggerCommands;
+
+pub mod dagger_commands;
+
 pub type LogStream = Sender<String>;
+
+#[derive(Clone)]
+pub struct Scheduler {
+    pub timestamp: i64,
+    pub completed: bool
+}
 
 #[derive(Clone)]
 struct SharedState {
     stream_logs_toggle: bool,
     last_known_modification: String,
+    scheduled_restart: Scheduler,
     auto_update: bool,
 }
 
@@ -124,12 +131,16 @@ async fn main() {
     } else {
         panic!("Error loading config");
     }
-
+    
     let (tx, _rx) = channel::<String>(10);
 
     let shared_state = Arc::new(Mutex::new(SharedState {
         stream_logs_toggle: false,
         last_known_modification: "".to_string(),
+        scheduled_restart: Scheduler {
+            timestamp: 0,
+            completed: true,
+        },
         auto_update: false,
     }));
 
@@ -149,6 +160,9 @@ async fn main() {
         .route("/stop-log-stream", put(handle_stop_log_stream))
         .route("/stream-logs", get(handle_stream_logs))
         .route("/log-stream/status", get(handle_get_log_stream_status))
+        .route("/schedule-restart", post(handle_schedule_restart))
+        .route("/scheduled-restart", get(handle_get_scheduled_restart))
+        .route("/time-utc", get(handle_get_time_utc))
         .route("/wield/service/id", get(handle_get_wield_node_id))
         .route("/wield/service/version", get(handle_get_wield_version))
         .route("/wield/service/status", get(handle_get_wield_status))
@@ -251,6 +265,7 @@ async fn main() {
         }
     });
 
+    // Auto Updater
     let tx3 = tx.clone();
     let shared_state3 = shared_state.clone();
     let config3 = config.clone();
@@ -276,32 +291,33 @@ async fn main() {
                     } else {
                         "/home/dagger/new-wield-binary/wield".to_string()
                     };
-                if Path::new(&path_to_wield_binary).exists() {
-                    let output = Command::new(path_to_wield_binary.clone())
-                        .arg("--version")
-                        .output()
-                        .await
-                        .expect(&format!(
-                            "Should successfully run wield --version from path {}",
-                            path_to_wield_binary
-                        ));
 
-                    let current_binary_version = String::from_utf8(output.stdout).unwrap();
+                    let url = if let Some(url) = config.wield_binary_url {
+                        url
+                    } else {
+                        "https://shdw-drive.genesysgo.net/4xdLyZZJzL883AbiZvgyWKf2q55gcZiMgMkDNQMnyFJC/wield-latest".to_string()
+                    };
 
-                    if Path::new(&path_to_updated_wield_binary).exists() {
-                        let output = Command::new(path_to_updated_wield_binary)
-                            .arg("--version")
-                            .output()
-                            .await;
-                        if let Ok(output) = output {
-                            let new_binary_version = String::from_utf8(output.stdout).unwrap();
+                let dcommands = DaggerCommands {
+                    path_to_wield_binary: path_to_wield_binary.clone(),
+                    path_to_new_wield_binary: path_to_updated_wield_binary.clone(),
+                    wield_binary_url: url,
+
+                };
+                
+                let current_binary_version = dcommands.get_current_version().await;
+                let updated_binary_version = dcommands.get_new_binary_version().await;
+
+                if let Ok(current_binary_version) = current_binary_version {
+                    if let Ok(new_binary_version) = updated_binary_version {
                             if current_binary_version != new_binary_version {
-                                Command::new("systemctl")
-                                    .arg("stop")
-                                    .arg("wield")
-                                    .output()
-                                    .await
-                                    .expect("Should successfully run shell command");
+                                if let Err(_) = dcommands.stop_node().await {
+                                    let _ = tx.send(
+                                        "toast-event -- Internal Error: Failed to stop wield node".to_string(),
+                                    );
+
+                                    continue;
+                                }
 
                                 let _ = tx.send(
                                     "toast-event -- Stopped wield node for auto-update".to_string(),
@@ -334,12 +350,15 @@ async fn main() {
                                             "toast-event -- New binary update successfull!"
                                                 .to_string(),
                                         );
-                                        Command::new("systemctl")
-                                            .arg("start")
-                                            .arg("wield")
-                                            .output()
-                                            .await
-                                            .expect("Should successfully run shell command");
+
+                                        if let Err(_) = dcommands.start_node().await {
+                                            let _ = tx.send(
+                                                "toast-event -- Internal Error: Failed to start node."
+                                                    .to_string(),
+                                            );
+                                            continue;
+                                        }
+
                                         let _ = tx.send(
                                             "toast-event -- Successfully updated wield service!"
                                                 .to_string(),
@@ -357,15 +376,78 @@ async fn main() {
                                     );
                                 }
                             }
-                        }
                     }
-                } else {
+
                 }
             }
 
             sleep(Duration::from_millis(1000)).await;
         }
     });
+
+    // Scheduler
+    let tx4 = tx.clone();
+    let shared_state4 = shared_state.clone();
+    tokio::spawn(async move {
+        let shared_state = shared_state4.clone();
+        let tx = tx4.clone();
+
+        loop {
+            let scheduler;
+            {
+                let locked = shared_state.lock().unwrap();
+                scheduler = locked.scheduled_restart.clone();
+            }
+
+
+            if !scheduler.completed {
+                let now = Utc::now().timestamp();
+                if now >= scheduler.timestamp {
+                    let _ = tx.send(
+                        "toast-event -- Scheduled restart triggered."
+                            .to_string(),
+                    );
+                    
+                    Command::new("systemctl")
+                        .arg("stop")
+                        .arg("wield")
+                        .output()
+                        .await
+                        .expect("Should successfully run shell command");
+
+                    let _ = tx.send(
+                        "toast-event -- Stopped wield node for scheduled restart.".to_string(),
+                    );
+                    sleep(Duration::from_millis(1000)).await;
+                    Command::new("systemctl")
+                        .arg("start")
+                        .arg("wield")
+                        .output()
+                        .await
+                        .expect("Should successfully run shell command");
+                    let _ = tx.send(
+                        "toast-event -- Started wield node for scheduled restart."
+                            .to_string(),
+                    );
+                    // update the scheduler
+                    {
+                        let mut locked = shared_state.lock().unwrap();
+                        locked.scheduled_restart.completed = true;
+                    }
+
+                    let _ = tx.send(
+                        "toast-event -- Scheduled restart complete."
+                            .to_string(),
+                    );
+                }
+            }
+            
+
+            sleep(Duration::from_millis(1000)).await;
+        }
+
+    });
+
 
     axum::serve(listener, app).await.unwrap();
 }
@@ -690,6 +772,85 @@ async fn handle_get_wield_node_id(
     (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
 }
 
+
+#[derive(Serialize, Deserialize)]
+struct ScheduleRestartData {
+    datetime: String,
+}
+
+
+async fn handle_schedule_restart(
+    cookies: PrivateCookieJar,
+    Extension(tx): Extension<LogStream>,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
+    Form(date_time_form): Form<ScheduleRestartData>,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+
+        let datetime = NaiveDateTime::parse_from_str(&date_time_form.datetime, "%Y-%m-%dT%H:%M")
+        .expect("Failed to parse datetime");
+
+        {
+            let mut shared_state_lock = shared_state.lock().unwrap();
+            shared_state_lock.scheduled_restart = Scheduler {
+                timestamp: datetime.timestamp(),
+                completed: false,
+            }
+        }
+
+
+        let tx = tx.clone();
+        let event_str = format!("toast-event -- Restart Scheduled for: {datetime}");
+        let _ = tx.send(event_str);
+        return StatusCode::OK;
+    }
+
+    StatusCode::UNAUTHORIZED
+}
+
+async fn handle_get_scheduled_restart(
+    cookies: PrivateCookieJar,
+    Extension(shared_state): Extension<Arc<Mutex<SharedState>>>,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+        let scheduled_restart_ts;
+        let completed;
+        {
+
+            let shared_state_lock = shared_state.lock().unwrap();
+            scheduled_restart_ts = shared_state_lock.scheduled_restart.timestamp;
+            completed = shared_state_lock.scheduled_restart.completed;
+        }
+
+        if scheduled_restart_ts > 0 {
+            let date_time = Utc.timestamp_opt(scheduled_restart_ts, 0).unwrap();
+            let mut res_str = format!("Restart Scheduled for: {}", date_time);
+            if completed {
+                res_str += " COMPLETED";
+            }
+            return (StatusCode::OK, res_str);
+        } else {
+            return (StatusCode::OK, "Restart Scheduled for: N/A".to_string());
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "UNAUTHORIZED".to_string())
+}
+
+async fn handle_get_time_utc(
+    cookies: PrivateCookieJar,
+) -> impl IntoResponse {
+    if has_valid_auth_token(cookies) {
+        let now = Utc::now();
+
+        let response_data = format!("Server Time UTC: {}", now);
+        return (StatusCode::OK, response_data);
+    }
+
+    (StatusCode::UNAUTHORIZED, "UNAUTHORIZED".to_string())
+}
+
+
 async fn handle_start_wield_service(
     cookies: PrivateCookieJar,
     Extension(tx): Extension<LogStream>,
@@ -967,12 +1128,15 @@ async fn get_last_modified(url: &str) -> String {
         .build()
         .unwrap();
 
-    let response = client.head(url).send().await.unwrap();
+    let response = client.head(url).send().await;
 
-    if response.status().is_success() {
-        if let Some(last_modified) = response.headers().get("Last-Modified") {
-            let last_modified_str = last_modified.to_str().unwrap();
-            return last_modified_str.to_string();
+    if let Ok(response) = response {
+        if response.status().is_success() {
+            if let Some(last_modified) = response.headers().get("Last-Modified") {
+                if let Ok(last_modified) = last_modified.to_str() {
+                    return last_modified.to_string();
+                }
+            }
         }
     }
 
